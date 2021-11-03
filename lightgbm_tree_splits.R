@@ -1,7 +1,5 @@
 library(lightgbm)
 library(data.table)
-library(ggplot2)
-library(AER) # for the dataset
 
 # cleanup
 
@@ -11,7 +9,6 @@ gc()
 # FUNCTIONS ########################
 
 split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, reg_lambda, reg_gamma){
-  
   return((
     (gradient_l^2 / (hessian_l+reg_lambda)) + 
       (gradient_r^2 / (hessian_r+reg_lambda)) - 
@@ -51,6 +48,8 @@ generate_claim_counts <- function(dt, var_impact){
 
 data_curr <- generate_claim_counts(data_curr, var_impact)
 
+data_curr
+
 # MODEL #################################
 
 run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_max_delta_step){
@@ -79,7 +78,7 @@ run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_ma
   return(lgb_model)
 }
 
-lgb_model <- run_model(learning_rate = 5, num_iterations = 100, min_sum_hessian = 0, poisson_max_delta_step = 0.6)
+lgb_model <- run_model(learning_rate = 1, num_iterations = 100, min_sum_hessian = 0, poisson_max_delta_step = 0.6, )
 data_curr[,predict := predict(lgb_model,dtrain_data)]
 data_curr[,predict_raw := predict(lgb_model,dtrain_data, rawscore = TRUE)]
 data_curr[,.(.N, mean_target = mean(target),predict = predict[1], predict_raw = predict_raw[1]), keyby = .(var1, var2)]
