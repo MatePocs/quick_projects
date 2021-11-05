@@ -52,15 +52,8 @@ data_curr
 
 # MODEL #################################
 
-run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_max_delta_step){
-  
-  dtrain_data <- as.matrix(data_curr[,.(var1, var2)])
-  dtrain_label <- as.matrix(data_curr[,.(target)])
-  
-  dtrain <- lgb.Dataset(
-    data = dtrain_data,
-    label = dtrain_label,
-    categorical_feature = c(1,2))
+run_model <- function(dtrain, learning_rate, num_iterations, 
+                      min_sum_hessian, poisson_max_delta_step){
   
   param <- list(
     objective = "poisson",
@@ -78,7 +71,16 @@ run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_ma
   return(lgb_model)
 }
 
-lgb_model <- run_model(learning_rate = 1, num_iterations = 100, min_sum_hessian = 0, poisson_max_delta_step = 0.6, )
+dtrain_data <- as.matrix(data_curr[,.(var1, var2)])
+dtrain_label <- as.matrix(data_curr[,.(target)])
+
+dtrain <- lgb.Dataset(
+  data = dtrain_data,
+  label = dtrain_label,
+  categorical_feature = c(1,2))
+
+lgb_model <- run_model(dtrain = dtrain, learning_rate = 0.3, num_iterations = 100, 
+                       min_sum_hessian = 0, poisson_max_delta_step = 0.6 )
 data_curr[,predict := predict(lgb_model,dtrain_data)]
 data_curr[,predict_raw := predict(lgb_model,dtrain_data, rawscore = TRUE)]
 data_curr[,.(.N, mean_target = mean(target),predict = predict[1], predict_raw = predict_raw[1]), keyby = .(var1, var2)]
@@ -107,6 +109,9 @@ data_curr[,.(.N, sum(target)), keyby = .(var2)]
 
 tree_chart <- lgb.model.dt.tree(lgb_model)
 View(tree_chart)
+
+tree_chart
+tree_chart[tree_index ==0,.(split_gain, internal_value, internal_count, leaf_value, leaf_count)]
 
 # this is how the predictions are made: 
 tree_chart[,exp(sum(leaf_value)), by = leaf_count] # doesn't work generally of course, you would have to check leaves individually
@@ -249,11 +254,11 @@ split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
 # let's check the second tree for the same leaves
 
 gradient_l <- 457 * exp(-0.4882079) - 125
-hessian_l <- 457 * exp(-0.4882079 + 0.6) 
+hessian_l <- 457 * exp(-0.4882079 + 0.6)  # 511.0541
 (-gradient_l / hessian_l) * 0.3  # -0.09126574
 
 gradient_r <- 340 * exp(-0.3887822) - 232
-hessian_r <- 340 * exp(-0.3887822 + 0.6) 
+hessian_r <- 340 * exp(-0.3887822 + 0.6) # 419.9617
 (-gradient_r / hessian_r) * 0.3  # -0.001085924
 
 # and one more check: on the second tree, can we replicate the first internal_value? 
