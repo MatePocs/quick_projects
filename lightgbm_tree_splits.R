@@ -407,10 +407,16 @@ data_curr[,sum(poisson_loglik_final_p)]
 
 data_curr[,sum(poisson_loglik_final_p)] - data_curr[,sum(poisson_loglik_1)] # 170.8909, that is the total gain on loglikelihood
 
-split_gain_sum <- tree_chart[!is.na(internal_count),sum(split_gain), by = internal_count]
-split_gain_sum[internal_count != 1000, sum(V1)]
+split_gain_sum <- tree_chart[!is.na(internal_count),.(split_count = .N, sum_split_gain = sum(split_gain)), by = internal_count]
+split_gain_sum[internal_count != 1000, sum(sum_split_gain)]
+
+split_gain_sum
 
 # OK, well, that's pretty close
+
+## leaf_values added up
+
+tree_chart[!is.na(leaf_count),.(sum_leaf_value = sum(leaf_value)), by = leaf_count]
 
 # NOTES #####################
 
