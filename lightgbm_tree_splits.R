@@ -245,11 +245,23 @@ gradient_r <- 340 * exp(-0.3900840061) - 232
 hessian_r <- 340 * exp(-0.3900840061 + 0.6) 
 (-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.3887822
 
-# does the gain match? 
-
 split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
            gradient_r = gradient_r, hessian_r = hessian_r, 
            reg_lambda = 0, reg_gamma = 0) # 26.41538
+
+# other branch
+
+gradient_l <- 117 * exp(-0.3900840061) - 141
+hessian_l <- 117 * exp(-0.3900840061 + 0.6) 
+(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.2616455
+
+gradient_r <- 86 * exp(-0.3900840061) - 179
+hessian_r <- 86 * exp(-0.3900840061 + 0.6) 
+(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.04854109
+
+split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
+           gradient_r = gradient_r, hessian_r = hessian_r, 
+           reg_lambda = 0, reg_gamma = 0) # 30.8529
 
 # let's check the second tree for the same leaves
 
@@ -268,6 +280,137 @@ gradient_l <- 457 * exp(-4.882079e-01) + 340 * exp(-3.887822e-01) - 357
 hessian_l <- 457 * exp(-4.882079e-01 + 0.6) + 340 * exp(-3.887822e-01 + 0.6)
 (-gradient_l / hessian_l) * 0.3  # -0.04960785
 
+
+##  re-calculate split gains ---------------
+
+# from case 3)
+
+# gains are supposed to represent improvement in objective 
+# following LightGBM method, so without fix part
+
+# very first split_gain: 1.670069e+02
+# ! this is independent of learning rate, the first tree's split gain is fix
+
+
+data_curr[,pred1:=mean(target)]
+data_curr[var2==0,pred2:=exp(-0.4457929)]
+data_curr[var2==1,pred2:=exp(-0.1713648)]
+
+data_curr[,poisson_loglik_1 := dpois(target, pred1, log = TRUE)]
+data_curr[,poisson_loglik_2 := dpois(target, pred2, log = TRUE)]
+data_curr[,poisson_loglik_3 := dpois(target, pred3, log = TRUE)]
+data_curr[,poisson_loglik_4 := dpois(target, pred4, log = TRUE)]
+
+data_curr
+
+data_curr[,sum(poisson_loglik_1)]
+data_curr[,sum(poisson_loglik_2)]
+
+# putting in smaller splits too
+
+data_curr[var1 == 0 & var2 == 0,pred3:= exp(-4.882079e-01)]
+data_curr[var1 == 1 & var2 == 0,pred3:= exp(-3.887822e-01)]
+data_curr[var1 == 0 & var2 == 1,pred3:= exp(-2.616455e-01)]
+data_curr[var1 == 1 & var2 == 1,pred3:= exp(-4.854109e-02)]
+
+# pred4 : as if they had learning_rate of 1
+
+data_curr[var1 == 0 & var2 == 0,pred4:= exp(-0.7171636)]
+data_curr[var1 == 1 & var2 == 0,pred4:= exp(-0.3857446)]
+# data_curr[var1 == 0 & var2 == 1,pred3:= exp(-2.616455e-01)]
+# data_curr[var1 == 1 & var2 == 1,pred3:= exp(-4.854109e-02)]
+
+data_curr[var2==0,sum(poisson_loglik_1)]
+data_curr[var2==0,sum(poisson_loglik_2)]
+data_curr[var2==0,sum(poisson_loglik_3)]
+data_curr[var2==0,sum(poisson_loglik_4)]
+
+#split gain looking for: 26.41538
+
+data_curr[,.N, keyby = .(var1, var2)]
+
+# OK, is it possible, that the split gain is as if the whole gradient was moved? 
+# so with a learning rate of 1? 
+
+# what would be the two internal values with learning rate of 1? 
+
+gradient_l <- 797 * exp(-0.3900840061) - 357
+hessian_l <- 797 * exp(-0.3900840061 + 0.6) 
+(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.4457929
+(-gradient_l / hessian_l) * 1.0 + -0.3900840061 # -0.5757804
+
+gradient_r <- 203 * exp(-0.3900840061) - 320
+hessian_r <- 203 * exp(-0.3900840061 + 0.6) 
+(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.1713648
+(-gradient_r / hessian_r) * 1.0 + -0.3900840061 # 0.33898
+
+data_curr[,pred1:=mean(target)]
+data_curr[var2==0,pred2:=exp(-0.5757804)]
+data_curr[var2==1,pred2:=exp(0.33898)]
+
+data_curr[,poisson_loglik_1 := dpois(target, pred1, log = TRUE)]
+data_curr[,poisson_loglik_2 := dpois(target, pred2, log = TRUE)]
+
+data_curr[,sum(poisson_loglik_1)]
+data_curr[,sum(poisson_loglik_2)]
+
+data_curr[,sum(poisson_loglik_2)] - data_curr[,sum(poisson_loglik_1)]
+
+# hm, 110, not yet 160 
+
+
+
+# can we re-calculate from objective? 
+# obj = -1/2 * sum (g^2 / h)
+# before splitting, all have the same obj...? 
+1/2 * ((gradient_l^2 / hessian_l) + (gradient_r^2 / hessian_r)) #-83.50344 .... well that is just a completely unknown nmber
+# without 1/2: this is also matching, I think that is because this is the first step
+((gradient_l^2 / hessian_l) + (gradient_r^2 / hessian_r)) # 167.0069
+# it's probably a tweak so we can start somewhere
+((gradient_l^2 / hessian_l) + (gradient_r^2 / hessian_r)) - (gradient_l + gradient_r)^2 / (hessian_l + hessian_r)
+
+(gradient_l + gradient_r) # ah, so the reason why this will match in the first run is because the two gradients are opposite
+
+# we know that the formula is
+
+# let's calculate the formula of the objective in the first sub-split
+
+gradient_l <- 457 * exp(-0.3900840061) - 125
+hessian_l <- 457 * exp(-0.3900840061 + 0.6) 
+(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.4882079
+(-gradient_l / hessian_l) * 1.0 + -0.3900840061 # -0.7171636
+
+
+gradient_r <- 340 * exp(-0.3900840061) - 232
+hessian_r <- 340 * exp(-0.3900840061 + 0.6) 
+(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.3887822
+(-gradient_r / hessian_r) * 1.0 + -0.3900840061 # -0.3857446
+
+# objective: 
+((gradient_l^2 / hessian_l) + (gradient_r^2 / hessian_r)) # 60.31778
+
+(gradient_l + gradient_r)^2 / (hessian_l + hessian_r) # 33.9024
+
+# split gain formula: 
+((gradient_l^2 / hessian_l) + (gradient_r^2 / hessian_r)) - (gradient_l + gradient_r)^2 / (hessian_l + hessian_r)
+
+
+## sum of split_gains #####################
+
+# ok well can we use the sum of split gain for something...? 
+
+tree_chart[,sum(split_gain), by = internal_count]
+
+data_curr[,poisson_loglik_final_p := dpois(target, predict, log = TRUE)]
+data_curr[,sum(poisson_loglik_1)]
+data_curr[,sum(poisson_loglik_final_p)]
+
+data_curr[,sum(poisson_loglik_final_p)] - data_curr[,sum(poisson_loglik_1)] # 170.8909, that is the total gain on loglikelihood
+
+split_gain_sum <- tree_chart[!is.na(internal_count),sum(split_gain), by = internal_count]
+split_gain_sum[internal_count != 1000, sum(V1)]
+
+# OK, well, that's pretty close
 
 # NOTES #####################
 
