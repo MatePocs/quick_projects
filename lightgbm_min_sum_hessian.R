@@ -74,12 +74,12 @@ run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_ma
     params = param, 
     data = dtrain,
     boosting = "gbdt",
-    verbose = -1)
+    verbose = 1)
   
   return(lgb_model)
 }
 
-lgb_model <- run_model(learning_rate = 0.3, num_iterations = 100, min_sum_hessian = 0, poisson_max_delta_step = 0.6)
+lgb_model <- run_model(learning_rate = 5, num_iterations = 100, min_sum_hessian = 0, poisson_max_delta_step = 0.6)
 data_curr[,predict := predict(lgb_model,dtrain_data)]
 data_curr[,predict_raw := predict(lgb_model,dtrain_data, rawscore = TRUE)]
 data_curr[,.(.N, mean_target = mean(target),predict = predict[1], predict_raw = predict_raw[1]), keyby = .(var1, var2)]
@@ -241,6 +241,12 @@ gradient_r <- 340 * exp(-0.3900840061) - 232
 hessian_r <- 340 * exp(-0.3900840061 + 0.6) 
 (-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.3887822
 
+# does the gain match? 
+
+split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
+           gradient_r = gradient_r, hessian_r = hessian_r, 
+           reg_lambda = 0, reg_gamma = 0) # 26.41538
+
 # let's check the second tree for the same leaves
 
 gradient_l <- 457 * exp(-0.4882079) - 125
@@ -251,15 +257,47 @@ gradient_r <- 340 * exp(-0.3887822) - 232
 hessian_r <- 340 * exp(-0.3887822 + 0.6) 
 (-gradient_r / hessian_r) * 0.3  # -0.001085924
 
+# and one more check: on the second tree, can we replicate the first internal_value? 
+# the trick is that there will be different prediction values by the other variable
+
+gradient_l <- 457 * exp(-4.882079e-01) + 340 * exp(-3.887822e-01) - 357
+hessian_l <- 457 * exp(-4.882079e-01 + 0.6) + 340 * exp(-3.887822e-01 + 0.6)
+(-gradient_l / hessian_l) * 0.3  # -0.04960785
+
+
+
+
+# LEARNING RATE ######################
+
+# what happens if we set
+
+
+
+
+# MIN SUM HESSIAN ANALYSED #####################
+
+# formula: exp(score + 0.7)
+
+# if 
+
+
+
+
+# MORE REALISTIC DATA ##################
+
+
+
 
 # NOTES #####################
 
 # in XGBoost, max_delta_step is set to 0.7 by default in Poisson regression (used to safeguard optimization)
 # https://xgboost.readthedocs.io/en/latest/parameter.html
 
+# when we start training, there is this line: Start training from score -0.390084
+# so I think it starts from the overall expected value (which is sensible)
 
 # in LightGBM, there is this comment: the final max output of leaves is learning_rate * max_delta_step
 
 # there is a separate Poisson max_delta_step, which also changes the results. 
 
-# well this is annoying. poisson_max_delta_step and max_delta_step dont do the same thing
+# well this is annoying. poisson_max_delta_step and max_delta_step don't do the same thing
