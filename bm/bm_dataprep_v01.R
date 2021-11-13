@@ -4,6 +4,8 @@ library(data.table)
 library(ggplot2)
 library(stringr)
 
+rm(list = ls())
+
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 dt <- fread('data/DS_data_test.csv')
@@ -17,6 +19,10 @@ dt <- fread('data/DS_data_test.csv')
 dt
 str(dt)
 summary(dt)
+
+## field categories ---------------------
+
+# id_fields: policy, policy_version
 
 ## policy & policy_version ----------------
 
@@ -342,6 +348,13 @@ dt[is.na(preinception_fault_claims), preinception_fault_claims := 0]
 
 # policy cancelled should be boolean
 dt[,policy_cancelled:=policy_cancelled == 1]
+
+# modify brand names
+dt[make == "MERCEDES-BENZ", make:= "MERCEDES"]
+dt[make == "LAND ROVER", make:= "LANDROVER"]
+
+dt <- dt[exposure > 0,]
+
 
 # final step: save cleaned data (to be used in visualisation and RShiny)
 
