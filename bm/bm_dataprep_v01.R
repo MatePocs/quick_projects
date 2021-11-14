@@ -355,11 +355,78 @@ dt[make == "LAND ROVER", make:= "LANDROVER"]
 
 dt <- dt[exposure > 0,]
 
+# calculate net premium
+dt[,premium := premium_gross * exposure]
+
+# create grp fields
+
+# unplugged_journeys
+# dt[,.N, keyby = unplugged_journeys]
+dt[unplugged_journeys == 0, grp_unplugged_journeys:= "no"]
+dt[unplugged_journeys > 0, grp_unplugged_journeys:= "yes"]
+
+# num_unplugs
+dt[,.N, keyby = num_unplugs]
+dt[num_unplugs == 0, grp_num_unplugs:= "0"]
+dt[num_unplugs == 1, grp_num_unplugs:= "1"]
+dt[num_unplugs == 2, grp_num_unplugs:= "2"]
+dt[num_unplugs == 3, grp_num_unplugs:= "3"]
+dt[num_unplugs >=4 & num_unplugs <= 10, grp_num_unplugs:= "4-10"]
+dt[num_unplugs > 10, grp_num_unplugs:= "more than 10"]
+
+label_10 <- as.character(1:10)
+label_10 <- paste0("grp ", label_10)
+label_6 <- as.character(1:6)
+label_6 <- paste0("grp ", label_6)
+
+# num_journeys
+dt[,.N, keyby = num_journeys]
+dt[,grp_num_journeys := quantileCut(dt[,num_journeys], 10, labels = label_10)]
+
+
+# total_miles
+dt[,grp_total_miles := quantileCut(dt[,total_miles], 10, labels = label_10)]
+
+# ncd
+# dt[,.N, keyby = ncd]
+dt[,grp_ncd := quantileCut(dt[,ncd], 10, labels = label_10)]
+
+# engine_size
+# dt[,.N, keyby = engine_size]
+dt[,grp_engine_size := quantileCut(dt[,engine_size], 10, labels = label_10)]
+
+# veh_age
+# dt[,.N, keyby = veh_age]
+dt[,grp_veh_age := quantileCut(dt[,veh_age], 10, labels = label_10)]
+
+# years_owned
+# dt[,.N, keyby = years_owned]
+dt[years_owned==0, grp_years_owned:="0"]
+dt[years_owned==1, grp_years_owned:="1"]
+dt[years_owned==2, grp_years_owned:="2"]
+dt[years_owned==3, grp_years_owned:="3"]
+dt[years_owned==4, grp_years_owned:="4"]
+dt[years_owned==5 | years_owned == 6 , grp_years_owned:="5 or 6"]
+dt[years_owned>=7, grp_years_owned:="more than 6"]
+
+# veh_value
+dt[,grp_veh_value:=quantileCut(dt[,veh_value],10, labels = label_10)]
+
+# ph_age
+# dt[,.N, keyby = ph_age]
+dt[,grp_ph_age := quantileCut(dt[,ph_age], 10, labels = label_10)]
+
+# ph_licence_years
+# dt[,.N, keyby = ph_licence_years]
+dt[,grp_ph_licence_years := quantileCut(dt[,ph_licence_years], 6, labels = label_6)]
+
 
 # final step: save cleaned data (to be used in visualisation and RShiny)
-
 fwrite(dt, file = 'data/DS_data_test_cleaned.csv')
+fwrite(dt, file = '../../R_Work/RShiny_Apps/insurance_profitability/data/data_cleaned.csv')
 
+
+dt[,.N, keyby = .(grp_ncd, ncd)]
 
 # QUESTIONS ####################
 # exposure

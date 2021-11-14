@@ -78,20 +78,24 @@ dt[,.(diff = (sum(premium) / sum(claims_incurred) - 1) * 100)]
 # from here: 
 # https://www.kaggle.com/c/ClaimPredictionChallenge/discussion/703
 
+Gini <- function(a, p) {
+  if (length(a) !=  length(p)) stop("Actual and Predicted need to be equal lengths!")
+  temp.df <- data.frame(actual = a, pred = p, range=c(1:length(a)))
+  temp.df <- temp.df[order(-temp.df$pred, temp.df$range),]
+  population.delta <- 1 / length(a)
+  total.losses <- sum(a)
+  null.losses <- rep(population.delta, length(a)) # Hopefully is similar to accumulatedPopulationPercentageSum
+  accum.losses <- temp.df$actual / total.losses # Hopefully is similar to accumulatedLossPercentageSum
+  gini.sum <- cumsum(accum.losses - null.losses) # Not sure if this is having the same effect or not
+  sum(gini.sum) / length(a)
+}
+
 normalizedGini <- function(aa, pp) {
-  Gini <- function(a, p) {
-    if (length(a) !=  length(p)) stop("Actual and Predicted need to be equal lengths!")
-    temp.df <- data.frame(actual = a, pred = p, range=c(1:length(a)))
-    temp.df <- temp.df[order(-temp.df$pred, temp.df$range),]
-    population.delta <- 1 / length(a)
-    total.losses <- sum(a)
-    null.losses <- rep(population.delta, length(a)) # Hopefully is similar to accumulatedPopulationPercentageSum
-    accum.losses <- temp.df$actual / total.losses # Hopefully is similar to accumulatedLossPercentageSum
-    gini.sum <- cumsum(accum.losses - null.losses) # Not sure if this is having the same effect or not
-    sum(gini.sum) / length(a)
-  }
   Gini(aa,pp) / Gini(aa,aa)
 }
+
+Gini(dt[,claims_incurred], dt[,premium])
+Gini(dt[,claims_incurred], dt[,claims_incurred])
 
 normalizedGini(dt[,claims_incurred], dt[,premium])
 
@@ -114,9 +118,14 @@ tweedie_deviance <- function(actu, pred, tweedie_power){
 
 tweedie_deviance(dt[,claims_incurred], dt[,premium], 1.5)
 
+# check 1st row
+tweedie_deviance(0, 174.09315, 1.5)
+# OK, that's working
+
 residual_deviance <- sum(tweedie_deviance(dt[,claims_incurred], dt[,premium], 1.5))/dt[,.N]
 null_deviance <- sum(tweedie_deviance(dt[,claims_incurred], sum(dt[,claims_incurred]) / dt[,.N], 1.5))/dt[,.N]
 deviance_explained <- (null_deviance - residual_deviance) / null_deviance
+deviance_explained
 
 ## lift chart ----------------------
 
@@ -140,6 +149,12 @@ p <- ggplot(data = plot_tbl, aes(x = pred_quantile, y = value, color = variable,
 p
 
 ggsave(filename = 'charts/lift_chart.PNG', plot = p, width = 5, height = 5, units = "in")
+
+## R^2 ----------
+
+rsq <- function(x, y) summary(lm(y~x))$r.squared
+rsq(x = plot_tbl[variable == "pred", value], y = plot_tbl[variable == "actu", value])
+# 0.7751114
 
 # ONE-D ANALYSIS - CATEGORICAL FEATURES ########################
 
@@ -195,6 +210,7 @@ analyse_profitability_1d_cat <- function(
   p2 <- ggplot(data = plt_tbl, aes(x = get(col_to_analyse), y = value, fill  = variable)) + 
     geom_bar(position = 'dodge', stat = 'identity') + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    scale_fill_manual(values = c("dodgerblue4", "red4")) +
     labs(x = col_to_analyse, y = "GBP")
   
   # exposure
