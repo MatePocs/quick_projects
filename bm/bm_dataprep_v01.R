@@ -428,6 +428,11 @@ fwrite(dt, file = '../../R_Work/RShiny_Apps/insurance_profitability/data/data_cl
 
 dt[,.N, keyby = .(grp_ncd, ncd)]
 
+
+col_to_analyse <- "region"
+x <- 1
+dt[x,get(col_to_analyse)]
+
 # QUESTIONS ####################
 # exposure
 # premium_gross
