@@ -3,6 +3,8 @@
 library(data.table)
 library(ggplot2)
 library(stringr)
+library(scales)
+library(lsr)
 
 rm(list = ls())
 
@@ -420,6 +422,9 @@ dt[,grp_ph_age := quantileCut(dt[,ph_age], 10, labels = label_10)]
 # dt[,.N, keyby = ph_licence_years]
 dt[,grp_ph_licence_years := quantileCut(dt[,ph_licence_years], 6, labels = label_6)]
 
+# calculate an expsoure-adjusted total miles, and add groups
+dt[,total_miles_exp_adj := total_miles / exposure]
+dt[,grp_total_miles_exp_adj := quantileCut(dt[,total_miles_exp_adj], 10, labels = label_10)]
 
 # final step: save cleaned data (to be used in visualisation and RShiny)
 fwrite(dt, file = 'data/DS_data_test_cleaned.csv')
