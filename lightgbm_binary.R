@@ -9,32 +9,32 @@ library(data.table)
 # cleanup
 rm(list = ls())
 
-
-# 1) ONE STEP PREDICTION #########################
-
-# do a one-step prediction
+# do a two-step prediction
 # re-calculate the numbers
 # to make sure we properly understand binary_logloss
+# with sigmoid parameter
 
-## data -----------------------------
+## DATA ###################################
 
 dt <- fread('./data/data_banknote_authentication.txt')
-setnames(dt, old = c("V1", "V2", "V3", "V4", "V5"), new = c("variance", "skewness", "curtosis", "entropy", "label"))
+setnames(dt, old = c("V1", "V2", "V3", "V4", "V5"), 
+         new = c("variance", "skewness", "curtosis", "entropy", "label"))
 
 dtrain <- lgb.Dataset(
   data = as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), 
   label = as.matrix(dt[,.(label)]))
 
-## model train ----------------------
+# MODEL TRAIN ###############################
 
 valids = c(train = dtrain)
 
 train_params <- list(
   num_leaves = 4,
   learning_rate = 0.3,
-  num_rounds = 1,
+  num_rounds = 2,
   objective = "binary", 
-  metric = c("binary_logloss", "binary_error")
+  metric = c("binary_logloss", "binary_error"),
+  sigmoid = 0.7
 )
 
 bst <- lgb.train(
@@ -47,32 +47,35 @@ bst <- lgb.train(
 lgb.get.eval.result(booster = bst, data_name = "train", eval_name = "binary_logloss")
 lgb.get.eval.result(booster = bst, data_name = "train", eval_name = "binary_error")
 
-dt[, predict_proba:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]))]
-dt[, predict := ifelse(predict_proba < 0.5, 0,1)] # note: this assumes we put equal weights on labels
-dt[,.N, keyby = .(predict, label)]
+dt[, predict_proba_nround1:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 1)]
+dt[, predict_rawscore_nround1:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 1, rawscore = TRUE)]
+dt[, predict_proba_nround2:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 2)]
+dt[, predict_rawscore_nround2:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 2, rawscore = TRUE)]
+dt[, predict := ifelse(predict_proba_nround2 < 0.5, 0,1)] # note: this assumes we put equal weights on labels
 
+# RECALC ERROR METRICS ##################################
 
-## recalculate error metrics ----------------------
-
-# binary_error: 0.0845481
+# binary_error: 0.07069971
 dt[,.N, keyby = .(predict, label)]
 #    predict label   N
-# 1:       0     0 715
+# 1:       0     0 734
 # 2:       0     1  69
-# 3:       1     0  47
+# 3:       1     0  28
 # 4:       1     1 541
-(69 + 47) / 1372
+(69 + 28) / 1372
 
-# binary_logloss: 0.5102119
+# binary_logloss: 0.3966159
 dt[, binary_logloss := label * log(predict_proba) + (1-label) * log(1-predict_proba)]
 -sum(dt[,binary_logloss])/1372
 
 
-## recalculate predictions --------------------------
+# PREDICTIONS FROM LEAF_VALUES ###############################
 
-# we only have one step now, 4 different predict_proba
+## first tree -----------------------
 
-dt[,.N, keyby = predict_proba]
+# this only has 4 splits, easy to gather
+
+dt[,.N, keyby = predict_proba_nround1]
 #    predict_proba   N
 # 1:     0.3373846 679
 # 2:     0.3702293 105
@@ -80,20 +83,102 @@ dt[,.N, keyby = predict_proba]
 # 4:     0.5905585 551
 
 tree_chart <- lgb.model.dt.tree(bst)
-View(tree_chart)
-
-tree_chart[!is.na(leaf_value), .(1/(1+ exp(-leaf_value)),leaf_value, leaf_count)]
+tree_chart[!is.na(leaf_value) & tree_index == 0, 
+           .(predict_proba_nround1=1/(1+ exp(-0.7*leaf_value)),leaf_value, leaf_count)][order(predict_proba_nround1)]
 
 # btw, inverse of the sigmoid function is the logit function
-1/(1+exp(-0.3662746)) # 0.5905585
-log((0.5905585)/(1-0.5905585)) # 0.3662747
+# sigmoid: 
+1/(1+exp(-0.5232494 * 0.7)) # 0.5905585
+# logit: 
+log((0.5905585)/(1-0.5905585))/0.7 # 0.5232495
+
+## final two-step predictions --------------------------
+
+
+# TODO
 
 
 
+# LEAF_VALUES REPLICATE ###############################
+
+View(tree_chart)
+
+## starting value -------------------------------
+
+# starts training from -0.317839
+mean(dt[,label]) # 0.4446064
+# put this in the logit func
+log((0.4446064)/(1-0.4446064))/0.7 # -0.3178395
+
+## first tree's 4 splits -----------------
+
+# splits: 
+# level 1: variance: 0.30942
+# level 2: skewness: 7.60565
+#          curtosis: -4.48625
+
+dt[variance <= 0.30942 & skewness <= 7.60565, .(leaf_count = .N, num_pos = sum(label), mean_label = mean(label))]
+#    leaf_count num_pos mean_label
+# 1:        551     512  0.9292196
+
+dt[variance <= 0.30942 & skewness > 7.60565, .(leaf_count = .N, num_pos = sum(label), mean_label = mean(label))]
+#    leaf_count num_pos mean_label
+# 1:        105      20  0.1904762
+
+# how does it get the 0.5232494 and -0.7589048 for these two groups? 
+
+# first group, with 551 observations, 512 positive
+response_pos = -1 * 0.7 / (1 + exp(1 * 0.7 * -0.317839))
+response_neg = 1 * 0.7 / (1 + exp(-1 * 0.7 * -0.317839))
+gradient = 512 * response_pos + 39 * response_neg
+hessian = 512 * (abs(response_pos) * (0.7-abs(response_pos))) + 39 * (abs(response_neg) * (0.7-abs(response_neg)))
+(-gradient / hessian) * 0.3 - 0.317839 # 0.5232497
+
+# second group, with 105 observations, 20 positive
+response_pos = -1 * 0.7 / (1 + exp(1 * 0.7 * -0.317839))
+response_neg = 1 * 0.7 / (1 + exp(-1 * 0.7 * -0.317839))
+gradient = 20 * response_pos + 85 * response_neg
+hessian = 20 * (abs(response_pos) * (0.7-abs(response_pos))) + 85 * (abs(response_neg) * (0.7-abs(response_neg)))
+(-gradient / hessian) * 0.3 - 0.317839 # -0.7589045
+
+## second level ---------------------------
+
+# btw, the second tree is not so symmetrical, one cut by variance, then skewness, then variance again
+# the observations are still all assigned to one leaf
+586 + 41 + 119 + 626 # 1372
+
+# let's do the simple one that is from the first variance split
+
+dt[variance > 0.77605, .N, keyby = .(label, predict_rawscore_nround1)]
+#    label predict_rawscore_nround1   N
+# 1:     0               -0.9642444 575
+# 2:     0                0.2708327   8
+# 3:     1               -0.9642444  23
+# 4:     1                0.2708327  20
+
+response_neg_1 = 1 * 0.7 / (1 + exp(-1 * 0.7 * -0.9642444))
+response_neg_2 = 1 * 0.7 / (1 + exp(-1 * 0.7 * 0.2708327))
+response_pos_1 = -1 * 0.7 / (1 + exp(1 * 0.7 * -0.9642444))
+response_pos_2 = -1 * 0.7 / (1 + exp(1 * 0.7 * 0.2708327))
+
+gradient = 575 * response_neg_1 + 8 * response_neg_2 + 23 * response_pos_1 + 20 * response_pos_2
+
+hessian = 575 * (abs(response_neg_1) * (0.7-abs(response_neg_1))) + 
+  8 * (abs(response_neg_2) * (0.7-abs(response_neg_2))) + 
+  23 * (abs(response_pos_1) * (0.7-abs(response_pos_1))) + 
+  20 * (abs(response_pos_2) * (0.7-abs(response_pos_2)))
+
+(-gradient / hessian) * 0.3 # -0.5305302
+
+# values are still added up from each run 
+
+dt[variance > 0.77605, .N, keyby = .(label, predict_rawscore_nround1, predict_rawscore_nround2)]
+
+# GRADIENT AND HESSIAN MATH #############################
 
 
 
-# NOTES ###############
+# NOTES ######################################
 
 # data: 
 # https://archive.ics.uci.edu/ml/datasets/banknote+authentication#
@@ -101,7 +186,7 @@ log((0.5905585)/(1-0.5905585)) # 0.3662747
 # loss function details: 
 # https://github.com/microsoft/LightGBM/blob/d517ba12f2e7862ac533908304dddbd770655d2b/src/objective/binary_objective.hpp
 
-# good article on logloss
+# good article on binary logloss
 # https://towardsdatascience.com/understanding-binary-cross-entropy-log-loss-a-visual-explanation-a3ac6025181a
 
 # sigmoid function: 
