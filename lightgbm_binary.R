@@ -18,9 +18,8 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 ## DATA ###################################
 
-dt <- fread('./data/data_banknote_authentication.txt')
-setnames(dt, old = c("V1", "V2", "V3", "V4", "V5"), 
-         new = c("variance", "skewness", "curtosis", "entropy", "label"))
+dt <- fread('./data/data_banknote_authentication.txt',
+            col.names = c("variance", "skewness", "curtosis", "entropy", "label"))
 
 dtrain_data <- as.matrix(dt[,.(variance, skewness, curtosis, entropy)])
 
