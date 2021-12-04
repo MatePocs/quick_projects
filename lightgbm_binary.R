@@ -9,6 +9,8 @@ library(data.table)
 # cleanup
 rm(list = ls())
 
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
 # do a two-step prediction
 # re-calculate the numbers
 # to make sure we properly understand binary_logloss
@@ -20,8 +22,10 @@ dt <- fread('./data/data_banknote_authentication.txt')
 setnames(dt, old = c("V1", "V2", "V3", "V4", "V5"), 
          new = c("variance", "skewness", "curtosis", "entropy", "label"))
 
+dtrain_data <- as.matrix(dt[,.(variance, skewness, curtosis, entropy)])
+
 dtrain <- lgb.Dataset(
-  data = as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), 
+  data = dtrain_data, 
   label = as.matrix(dt[,.(label)]))
 
 # MODEL TRAIN ###############################
@@ -43,20 +47,20 @@ bst <- lgb.train(
   valids = valids
 )
 
+dt[, predict_proba_nround1:=predict(bst, dtrain_data, num_iteration = 1)]
+dt[, predict_rawscore_nround1:=predict(bst, dtrain_data, num_iteration = 1, rawscore = TRUE)]
+dt[, predict_proba_nround2:=predict(bst, dtrain_data, num_iteration = 2)]
+dt[, predict_rawscore_nround2:=predict(bst, dtrain_data, num_iteration = 2, rawscore = TRUE)]
+dt[, predict_nround1 := ifelse(predict_proba_nround1 < 0.5, 0,1)]
+dt[, predict_nround2 := ifelse(predict_proba_nround2 < 0.5, 0,1)] 
+
+# RECALC ERROR METRICS ##################################
 
 lgb.get.eval.result(booster = bst, data_name = "train", eval_name = "binary_logloss")
 lgb.get.eval.result(booster = bst, data_name = "train", eval_name = "binary_error")
 
-dt[, predict_proba_nround1:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 1)]
-dt[, predict_rawscore_nround1:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 1, rawscore = TRUE)]
-dt[, predict_proba_nround2:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 2)]
-dt[, predict_rawscore_nround2:=predict(bst, as.matrix(dt[,.(variance, skewness, curtosis, entropy)]), num_iteration = 2, rawscore = TRUE)]
-dt[, predict := ifelse(predict_proba_nround2 < 0.5, 0,1)] # note: this assumes we put equal weights on labels
-
-# RECALC ERROR METRICS ##################################
-
 # binary_error: 0.07069971
-dt[,.N, keyby = .(predict, label)]
+dt[,.N, keyby = .(predict = predict_nround2, label)]
 #    predict label   N
 # 1:       0     0 734
 # 2:       0     1  69
@@ -65,8 +69,10 @@ dt[,.N, keyby = .(predict, label)]
 (69 + 28) / 1372
 
 # binary_logloss: 0.3966159
-dt[, binary_logloss := label * log(predict_proba) + (1-label) * log(1-predict_proba)]
--sum(dt[,binary_logloss])/1372
+dt[, binary_logloss_nround2 := 
+     label * log(predict_proba_nround2) + 
+     (1-label) * log(1-predict_proba_nround2)]
+-sum(dt[,binary_logloss_nround2])/dt[,.N]
 
 
 # PREDICTIONS FROM LEAF_VALUES ###############################
@@ -75,12 +81,12 @@ dt[, binary_logloss := label * log(predict_proba) + (1-label) * log(1-predict_pr
 
 # this only has 4 splits, easy to gather
 
-dt[,.N, keyby = predict_proba_nround1]
-#    predict_proba   N
-# 1:     0.3373846 679
-# 2:     0.3702293 105
-# 3:     0.5472543  37
-# 4:     0.5905585 551
+dt[,.N, keyby = .(predict_proba_nround1, predict_rawscore_nround1)]
+#    predict_proba_nround1 predict_rawscore_nround1   N
+# 1:             0.3373846               -0.9642444 679
+# 2:             0.3702293               -0.7589048 105
+# 3:             0.5472543                0.2708327  37
+# 4:             0.5905585                0.5232494 551
 
 tree_chart <- lgb.model.dt.tree(bst)
 tree_chart[!is.na(leaf_value) & tree_index == 0, 
@@ -92,16 +98,10 @@ tree_chart[!is.na(leaf_value) & tree_index == 0,
 # logit: 
 log((0.5905585)/(1-0.5905585))/0.7 # 0.5232495
 
-## final two-step predictions --------------------------
-
-
-# TODO
-
+tree_chart[tree_index == 0 & !is.na(leaf_value), .(tree_index, leaf_index, leaf_value, leaf_count)]
 
 
 # LEAF_VALUES REPLICATE ###############################
-
-View(tree_chart)
 
 ## starting value -------------------------------
 
@@ -131,8 +131,12 @@ dt[variance <= 0.30942 & skewness > 7.60565, .(leaf_count = .N, num_pos = sum(la
 response_pos = -1 * 0.7 / (1 + exp(1 * 0.7 * -0.317839))
 response_neg = 1 * 0.7 / (1 + exp(-1 * 0.7 * -0.317839))
 gradient = 512 * response_pos + 39 * response_neg
-hessian = 512 * (abs(response_pos) * (0.7-abs(response_pos))) + 39 * (abs(response_neg) * (0.7-abs(response_neg)))
+hessian = 512 * (abs(response_pos) * (0.7-abs(response_pos))) + 
+  39 * (abs(response_neg) * (0.7-abs(response_neg)))
 (-gradient / hessian) * 0.3 - 0.317839 # 0.5232497
+
+response_pos
+response_neg
 
 # second group, with 105 observations, 20 positive
 response_pos = -1 * 0.7 / (1 + exp(1 * 0.7 * -0.317839))
@@ -149,19 +153,24 @@ hessian = 20 * (abs(response_pos) * (0.7-abs(response_pos))) + 85 * (abs(respons
 
 # let's do the simple one that is from the first variance split
 
-dt[variance > 0.77605, .N, keyby = .(label, predict_rawscore_nround1)]
-#    label predict_rawscore_nround1   N
-# 1:     0               -0.9642444 575
-# 2:     0                0.2708327   8
-# 3:     1               -0.9642444  23
-# 4:     1                0.2708327  20
+dt[variance > 0.77605, .N, keyby = .(label, predict_rawscore_nround1, predict_rawscore_nround2)]
+
+#    label predict_rawscore_nround1 predict_rawscore_nround2   N
+# 1:     0               -0.9642444               -1.4947746 575
+# 2:     0                0.2708327               -0.2596975   8
+# 3:     1               -0.9642444               -1.4947746  23
+# 4:     1                0.2708327               -0.2596975  20
+
+dt[variance > 0.77605, .N, keyby = .(label, predict_rawscore_nround1, predict_rawscore_nround2)][
+  ,predict_rawscore_nround2-predict_rawscore_nround1] # -0.5305303
 
 response_neg_1 = 1 * 0.7 / (1 + exp(-1 * 0.7 * -0.9642444))
 response_neg_2 = 1 * 0.7 / (1 + exp(-1 * 0.7 * 0.2708327))
 response_pos_1 = -1 * 0.7 / (1 + exp(1 * 0.7 * -0.9642444))
 response_pos_2 = -1 * 0.7 / (1 + exp(1 * 0.7 * 0.2708327))
 
-gradient = 575 * response_neg_1 + 8 * response_neg_2 + 23 * response_pos_1 + 20 * response_pos_2
+gradient = 575 * response_neg_1 + 8 * response_neg_2 + 
+  23 * response_pos_1 + 20 * response_pos_2
 
 hessian = 575 * (abs(response_neg_1) * (0.7-abs(response_neg_1))) + 
   8 * (abs(response_neg_2) * (0.7-abs(response_neg_2))) + 
@@ -170,18 +179,11 @@ hessian = 575 * (abs(response_neg_1) * (0.7-abs(response_neg_1))) +
 
 (-gradient / hessian) * 0.3 # -0.5305302
 
-# values are still added up from each run 
-
-dt[variance > 0.77605, .N, keyby = .(label, predict_rawscore_nround1, predict_rawscore_nround2)]
-
-# GRADIENT AND HESSIAN MATH #############################
-
-
 
 # NOTES ######################################
 
 # data: 
-# https://archive.ics.uci.edu/ml/datasets/banknote+authentication#
+# https://archive.ics.uci.edu/ml/datasets/banknote+authentication
 
 # loss function details: 
 # https://github.com/microsoft/LightGBM/blob/d517ba12f2e7862ac533908304dddbd770655d2b/src/objective/binary_objective.hpp
