@@ -1,10 +1,11 @@
+
+# LIBRARIES ########################
+
 library(lightgbm)
 library(data.table)
 library(ggplot2)
-library(AER) # for the dataset
 
 # cleanup
-
 rm(list = ls())
 gc()
 
@@ -20,28 +21,6 @@ split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, reg_lambda,
     reg_gamma) 
 }
 
-# DATA ################################
-
-set.seed(100) 
-
-# data 1: only 1 split
-data_curr <- data.table(
-  var1 = sample(c(0,1), prob = c(0.75, 0.25), size = 1000, replace = TRUE),
-  var2 = 0
-)
-
-# data 2: two variables
-data_curr <- data.table(
-  var1 = sample(c(0,1), prob = c(0.6, 0.4), size = 1000, replace = TRUE),
-  var2 = sample(c(0,1), prob = c(0.8, 0.2), size = 1000, replace = TRUE)
-)
-
-var_impact <- data.table(
-  var1 = c(0,1,0,1),
-  var2 = c(0,0,1,1),
-  lambda = c(0.3, 0.7, 1.3, 1.9)
-)
-
 generate_claim_counts <- function(dt, var_impact){
   dt <- merge.data.table(x = dt, y = var_impact, by = c("var1", "var2"))
   random_pois <- as.numeric(lapply(dt[,lambda], function(x){rpois(n = 1, lambda = x)}))
@@ -49,14 +28,9 @@ generate_claim_counts <- function(dt, var_impact){
   return(dt)
 }
 
-data_curr <- generate_claim_counts(data_curr, var_impact)
-
-# MODEL #################################
-
-run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_max_delta_step){
-  
-  dtrain_data <- as.matrix(data_curr[,.(var1, var2)])
-  dtrain_label <- as.matrix(data_curr[,.(target)])
+run_model <- function(learning_rate, num_iterations, 
+                      min_sum_hessian, poisson_max_delta_step, 
+                      dtrain_data, dtrain_label){
   
   dtrain <- lgb.Dataset(
     data = dtrain_data,
@@ -79,21 +53,58 @@ run_model <- function(learning_rate, num_iterations, min_sum_hessian, poisson_ma
   return(lgb_model)
 }
 
-lgb_model <- run_model(learning_rate = 5, num_iterations = 100, min_sum_hessian = 0, poisson_max_delta_step = 0.6)
+# DATA ################################
+
+set.seed(100) 
+
+# choose one, data 1 or data 2
+
+# data 1: only 1 split
+data_curr <- data.table(
+  var1 = sample(c(0,1), prob = c(0.75, 0.25), size = 1000, replace = TRUE),
+  var2 = 0
+)
+
+# data 2: two variables
+data_curr <- data.table(
+  var1 = sample(c(0,1), prob = c(0.6, 0.4), size = 1000, replace = TRUE),
+  var2 = sample(c(0,1), prob = c(0.8, 0.2), size = 1000, replace = TRUE)
+)
+
+var_impact <- data.table(
+  var1 = c(0,1,0,1),
+  var2 = c(0,0,1,1),
+  lambda = c(0.3, 0.7, 1.3, 1.9)
+)
+
+data_curr <- generate_claim_counts(data_curr, var_impact)
+
+# MODEL #################################
+
+dtrain_data <- as.matrix(data_curr[,.(var1, var2)])
+dtrain_label <- as.matrix(data_curr[,.(target)])
+
+rm(lgb_model)
+lgb_model <- run_model(
+  learning_rate = 0.5, num_iterations = 100, 
+  min_sum_hessian = 0, poisson_max_delta_step = 0.6,
+  dtrain_data = dtrain_data, dtrain_label = dtrain_label)
+
 data_curr[,predict := predict(lgb_model,dtrain_data)]
 data_curr[,predict_raw := predict(lgb_model,dtrain_data, rawscore = TRUE)]
-data_curr[,.(.N, mean_target = mean(target),predict = predict[1], predict_raw = predict_raw[1]), keyby = .(var1, var2)]
 
+data_curr[,.(.N, mean_target = mean(target),predict = predict[1], 
+             predict_raw = predict_raw[1]), keyby = .(var1, var2)]
 #    var1 var2   N mean_target   predict predict_raw
 # 1:    0    0 457   0.2735230 0.2735230  -1.2963696
 # 2:    0    1 117   1.2051282 1.2051282   0.1865859
 # 3:    1    0 340   0.6823529 0.6823529  -0.3822083
 # 4:    1    1  86   2.0813953 2.0813953   0.7330385
 
-data_curr[,mean(target)] # 0.677
+data_curr[,mean(target)] 
+# 0.677
 
 data_curr[,.(.N, sum(target)), keyby = .(var1, var2)]
-
 #    var1 var2   N  V2
 # 1:    0    0 457 125
 # 2:    0    1 117 141
@@ -101,7 +112,6 @@ data_curr[,.(.N, sum(target)), keyby = .(var1, var2)]
 # 4:    1    1  86 179
 
 data_curr[,.(.N, sum(target)), keyby = .(var2)]
-
 #    var2   N  V2
 # 1:    0 797 357
 # 2:    1 203 320
@@ -110,7 +120,8 @@ tree_chart <- lgb.model.dt.tree(lgb_model)
 View(tree_chart)
 
 # this is how the predictions are made: 
-tree_chart[,exp(sum(leaf_value)), by = leaf_count] # doesn't work generally of course, you would have to check leaves individually
+tree_chart[,exp(sum(leaf_value)), by = leaf_count] 
+# doesn't work generally of course, you would have to check leaves individually
 
 
 # THEORY ######################
@@ -121,22 +132,21 @@ tree_chart[,exp(sum(leaf_value)), by = leaf_count] # doesn't work generally of c
 # poisson gradient: exp(raw_score) - label
 # poisson hessian: exp(raw_score + max_delta_step)
 
-# RECALCULATE RESULTS ##################
+tree_chart
+
+# RECALCULATE RESULTS ################################
 
 ## case 1) - data 1, learning rate 1, max_delta_step 0.7 -----------------------
 
 # the first internal value, -0.8486321, is the average: 
 exp(-0.8486321)
 
-# trying to replicate leaf value -9.437754e-01 on leaf counr 737
-# maybe internal value is used at this point, scores are internal values, and then we add the calculated one...? 
-
+# replicating leaf value -9.437754e-01 on leaf count 737
 gradient_l <- 737 * exp(-0.8486321) - 255
 hessian_l <- 737 * exp(-0.8486321 + 0.7) # 831.336
 -gradient_l / hessian_l + -0.8486321 # -0.9437754
 
 # other branch: -5.820137e-01 on leaf count 263
-
 gradient_r <- 263 * exp(-0.8486321) - 173
 hessian_r <- 263 * exp(-0.8486321 + 0.7) # 226.6761 
 -gradient_r / hessian_r + -0.8486321 # -0.5820137
@@ -265,39 +275,24 @@ hessian_l <- 457 * exp(-4.882079e-01 + 0.6) + 340 * exp(-3.887822e-01 + 0.6)
 (-gradient_l / hessian_l) * 0.3  # -0.04960785
 
 
-
-
-# LEARNING RATE ######################
-
-# what happens if we set
-
-
-
-
 # MIN SUM HESSIAN ANALYSED #####################
 
-# formula: exp(score + 0.7)
-
-# if 
+# min_sum_hessian formula for Poisson: exp(score + 0.7)
 
 
 
 
-# MORE REALISTIC DATA ##################
 
 
 
-
-# NOTES #####################
+# NOTES #####################################
 
 # in XGBoost, max_delta_step is set to 0.7 by default in Poisson regression (used to safeguard optimization)
 # https://xgboost.readthedocs.io/en/latest/parameter.html
 
 # when we start training, there is this line: Start training from score -0.390084
-# so I think it starts from the overall expected value (which is sensible)
+# it starts from the overall expected value (which is sensible)
 
 # in LightGBM, there is this comment: the final max output of leaves is learning_rate * max_delta_step
-
 # there is a separate Poisson max_delta_step, which also changes the results. 
-
 # well this is annoying. poisson_max_delta_step and max_delta_step don't do the same thing
