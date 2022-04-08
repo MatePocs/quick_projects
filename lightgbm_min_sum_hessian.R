@@ -29,7 +29,7 @@ generate_claim_counts <- function(dt, var_impact){
 }
 
 run_model <- function(learning_rate, num_iterations, 
-                      min_sum_hessian, poisson_max_delta_step, 
+                      min_sum_hessian,  
                       dtrain_data, dtrain_label){
   
   dtrain <- lgb.Dataset(
@@ -41,8 +41,7 @@ run_model <- function(learning_rate, num_iterations,
     objective = "poisson",
     num_iterations = num_iterations, 
     learning_rate = learning_rate,
-    min_sum_hessian = min_sum_hessian,
-    poisson_max_delta_step = poisson_max_delta_step)
+    min_sum_hessian = min_sum_hessian)
   
   lgb_model <- lgb.train(
     params = param, 
@@ -86,8 +85,8 @@ dtrain_label <- as.matrix(data_curr[,.(target)])
 
 rm(lgb_model)
 lgb_model <- run_model(
-  learning_rate = 0.5, num_iterations = 100, 
-  min_sum_hessian = 0, poisson_max_delta_step = 0.6,
+  learning_rate = 0.3, num_iterations = 100, 
+  min_sum_hessian = 276.75,
   dtrain_data = dtrain_data, dtrain_label = dtrain_label)
 
 data_curr[,predict := predict(lgb_model,dtrain_data)]
@@ -111,17 +110,6 @@ data_curr[,.(.N, sum(target)), keyby = .(var1, var2)]
 # 3:    1    0 340 232
 # 4:    1    1  86 179
 
-data_curr[,.(.N, sum(target)), keyby = .(var2)]
-#    var2   N  V2
-# 1:    0 797 357
-# 2:    1 203 320
-
-tree_chart <- lgb.model.dt.tree(lgb_model)
-View(tree_chart)
-
-# this is how the predictions are made: 
-tree_chart[,exp(sum(leaf_value)), by = leaf_count] 
-# doesn't work generally of course, you would have to check leaves individually
 
 
 # THEORY ######################
@@ -132,106 +120,66 @@ tree_chart[,exp(sum(leaf_value)), by = leaf_count]
 # poisson gradient: exp(raw_score) - label
 # poisson hessian: exp(raw_score + max_delta_step)
 
-tree_chart
+tree_chart <- lgb.model.dt.tree(lgb_model)
+tree_chart[tree_index < 3,]
 
 # RECALCULATE RESULTS ################################
 
-## case 1) - data 1, learning rate 1, max_delta_step 0.7 -----------------------
+# main question here: can we set min_sum_hessian in a way that one split does not happen? 
 
-# the first internal value, -0.8486321, is the average: 
-exp(-0.8486321)
+## case 1) - data 2, learning rate 0.3, max_delta_step 0.6, min_sum_hessian 0 --------------------
 
-# replicating leaf value -9.437754e-01 on leaf count 737
-gradient_l <- 737 * exp(-0.8486321) - 255
-hessian_l <- 737 * exp(-0.8486321 + 0.7) # 831.336
--gradient_l / hessian_l + -0.8486321 # -0.9437754
-
-# other branch: -5.820137e-01 on leaf count 263
-gradient_r <- 263 * exp(-0.8486321) - 173
-hessian_r <- 263 * exp(-0.8486321 + 0.7) # 226.6761 
--gradient_r / hessian_r + -0.8486321 # -0.5820137
-
-# what about second round? 
-gradient_l <- 737 * exp(-9.437754e-01) - 255
-hessian_l <- 737 * exp(-9.437754e-01 + 0.7) # 831.336
--gradient_l / hessian_l # -0.0550728
-
-gradient_r <- 263 * exp(-5.820137e-01) - 173
-hessian_r <- 263 * exp(-5.820137e-01 + 0.7) # 295
--gradient_r / hessian_r # 0.08800224
-
-# and what is the split gain? from th XGBoost documentation, long formula: 
-
-reg_lambda <- 0
-reg_gamma <- 0
-
-(
-  (gradient_l^2 / (hessian_l+reg_lambda)) + 
-  (gradient_r^2 / (hessian_r+reg_lambda)) - 
-  ((gradient_l + gradient_r)^2 / (hessian_l+hessian_r+reg_lambda))
-  ) - 
-  reg_gamma # 21.86343
-
-# what about second level? yes, matches, you just use the same formula with different values
-
-# does not match XGBoost formula, no divide by 2
-
-
-## case 2) - data 1, learning_rate 0.5, max_delta_step 0.7 ----------------------
-
-gradient_l <- 737 * exp(-0.8486321) - 255
-hessian_l <- 737 * exp(-0.8486321 + 0.7) 
-(-gradient_l / hessian_l) * 0.5 + -0.8486321 # -0.8962038
-
-gradient_r <- 263 * exp(-0.8486321) - 173
-hessian_r <- 263 * exp(-0.8486321 + 0.7) 
-(-gradient_r / hessian_r) * 0.5 + -0.8486321 # -0.7153229
-
-gradient_l <- 737 * exp(-8.962037e-01) - 255
-hessian_l <- 737 * exp(-8.962037e-01 + 0.7) 
-(-gradient_l / hessian_l) * 0.5  # -0.03779227
-
-gradient_r <- 263 * exp(-7.153229e-01) - 173
-hessian_r <- 263 * exp(-7.153229e-01 + 0.7) 
-(-gradient_r / hessian_r) * 0.5 # 0.08568316
-
-
-## case 3) - data 2, learning rate 0.3, max_delta_step 0.6 --------------------
-
-# first, let's have a look at the internal_values
-
-# main internal value is simply the overall expected value, 0.677: 
+# starting main internal value is simply the overall expected value, 0.677: 
 exp(-0.3900840061)
 
-# first split: by var 1
-# expected values there: 
-data_curr[,log(mean(target)), by = var2]
-#    var2         V1
-# 1:    0 -0.8031189
-# 2:    1  0.4551150
-
-# these are not the values in the internal value, even if we add the -0.39
-
-# another option is that they really are what the documentation says: the leaf value, if we ended here
-
+# first split: by var 2
 gradient_l <- 797 * exp(-0.3900840061) - 357
-hessian_l <- 797 * exp(-0.3900840061 + 0.6) 
-(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.4457929
+hessian_l <- 797 * exp(-0.3900840061 + 0.7) 
+(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.4404915
 
-# yup, the first split internal value is really calculated as if it were a leaf
 
 gradient_r <- 203 * exp(-0.3900840061) - 320
-hessian_r <- 203 * exp(-0.3900840061 + 0.6) 
-(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.1713648
+hessian_r <- 203 * exp(-0.3900840061 + 0.7) 
+(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.1921787
 
 # gain of the fist split: 
 
 split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
            gradient_r = gradient_r, hessian_r = hessian_r, 
-           reg_lambda = 0, reg_gamma = 0) # 167.0069, checks out
+           reg_lambda = 0, reg_gamma = 0) # 151.1141, checks out
 
 
-# now, on to the leaves, can we simply put in the internal values for scores? 
+# now, on to the leaves,
+
+# first split: 797, where var2 = 0
+
+gradient_l <- 457 * exp(-0.3900840061) - 125
+hessian_l <- 457 * exp(-0.3900840061 + 0.7) 
+(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.4788702
+
+# OK, interestingly, it doesn't use the internal value from the previous split, uses the overall
+# so the first split's internal value does not really matter...
+
+gradient_r <- 340 * exp(-0.3900840061) - 232
+hessian_r <- 340 * exp(-0.3900840061 + 0.7) 
+(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.3889061
+
+# does the gain match? 
+
+split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
+           gradient_r = gradient_r, hessian_r = hessian_r, 
+           reg_lambda = 0, reg_gamma = 0) # 23.90163
+
+# now the other split, where var2 = 1, 203 in total
+
+gradient_l <- 117 * exp(-0.3900840061) - 141
+hessian_l <- 117 * exp(-0.3900840061 + 0.7) 
+(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.273868
+
+gradient_r <- 86 * exp(-0.3900840061) - 179
+hessian_r <- 86 * exp(-0.3900840061 + 0.7) 
+(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.0810432
+
 
 #    var1 var2   N  V2
 # 1:    0    0 457 125
@@ -239,33 +187,17 @@ split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
 # 3:    1    0 340 232
 # 4:    1    1  86 179
 
-# first split: 797, where var2 = 0
-
-gradient_l <- 457 * exp(-0.3900840061) - 125
-hessian_l <- 457 * exp(-0.3900840061 + 0.6) 
-(-gradient_l / hessian_l) * 0.3 + -0.3900840061 # -0.4882079
-
-# OK, interestingly, it doesn't use the internal value from the previous split, uses the overall
-
-gradient_r <- 340 * exp(-0.3900840061) - 232
-hessian_r <- 340 * exp(-0.3900840061 + 0.6) 
-(-gradient_r / hessian_r) * 0.3 + -0.3900840061 # -0.3887822
-
-# does the gain match? 
-
-split_gain(gradient_l = gradient_l, hessian_l = hessian_l,
-           gradient_r = gradient_r, hessian_r = hessian_r, 
-           reg_lambda = 0, reg_gamma = 0) # 26.41538
 
 # let's check the second tree for the same leaves
+# at this point, the starting predictions changed from the original -0.3900840061
 
-gradient_l <- 457 * exp(-0.4882079) - 125
-hessian_l <- 457 * exp(-0.4882079 + 0.6) 
-(-gradient_l / hessian_l) * 0.3  # -0.09126574
+gradient_l <- 457 * exp(-0.4788702) - 125
+hessian_l <- 457 * exp(-0.4788702 + 0.7) 
+(-gradient_l / hessian_l) * 0.3  # -0.08319775
 
-gradient_r <- 340 * exp(-0.3887822) - 232
-hessian_r <- 340 * exp(-0.3887822 + 0.6) 
-(-gradient_r / hessian_r) * 0.3  # -0.001085924
+gradient_r <- 340 * exp(-0.3889061) - 232
+hessian_r <- 340 * exp(-0.3889061 + 0.7) 
+(-gradient_r / hessian_r) * 0.3  # -0.001001166
 
 # and one more check: on the second tree, can we replicate the first internal_value? 
 # the trick is that there will be different prediction values by the other variable
@@ -279,6 +211,44 @@ hessian_l <- 457 * exp(-4.882079e-01 + 0.6) + 340 * exp(-3.887822e-01 + 0.6)
 
 # min_sum_hessian formula for Poisson: exp(score + 0.7)
 
+# theory: if we set min_sum_hessian to 120, the var2 = 1 route won't be changed
+# running model again
+# yes, it doesn't split it in the first tree, var2 = 1 gets a -0.192178698 combined
+# however, after that, it does get split in the second tree
+# recalculating the results in the second tree
+
+gradient_l <- 117 * exp(-0.192178698) - 141
+hessian_l <- 117 * exp(-0.192178698 + 0.7) 
+(-gradient_l / hessian_l) * 0.3 # 0.06860017
+
+gradient_r <- 86 * exp(-0.192178698) - 179
+hessian_r <- 86 * exp(-0.192178698 + 0.7) 
+(-gradient_r / hessian_r) * 0.3 # 0.2268028
+
+# if we increase the min_sum_hessian to 145, there won't be a split in the second tree either
+# yes, it starts splitting the tree at the 3rd level
+# re-calculate splits at level 3
+
+gradient_l <- 117 * exp(-0.192178698 + 0.1356219900) - 141
+hessian_l <- 117 * exp(-0.192178698 + 0.1356219900 + 0.7) 
+(-gradient_l / hessian_l) * 0.3 # 0.04100561
+
+gradient_r <- 86 * exp(-0.192178698 + 0.1356219900) - 179
+hessian_r <- 86 * exp(-0.192178698 + 0.1356219900 + 0.7) 
+(-gradient_r / hessian_r) * 0.3 # 0.1791439
+
+# all right, and if we set the hessian high enough
+# in the branch with 86 observations
+# rough estimation of a min_sum_hessian that should not let the var2 = 1 branch to split: 
+
+86 * (141 + 179) / (117 + 86) * 2.01  # 271.133
+
+# let's round up, 275 min_sum_hessian should be large enough for that branch not to be split
+# the hessian of the first var2 split's smaler branch is 276.752
+
+# no, apparently, in this example, life finds a way
+
+# CHART ######################################
 
 
 
