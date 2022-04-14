@@ -4,6 +4,7 @@
 library(lightgbm)
 library(data.table)
 library(ggplot2)
+library(scales)
 
 # cleanup
 rm(list = ls())
@@ -250,19 +251,120 @@ hessian_r <- 86 * exp(-0.192178698 + 0.1356219900 + 0.7)
 
 # CHART ######################################
 
+# trying to get a proper visualisation 
+
+# if we have an actual value of 1, how does the log-likelihood, gradient, hessian look? 
+
+# likelihood of Poisson: 
+# pred ^ actu * exp(-pred) / factorial(actu)
+# log-likelihood: 
+# actu * log(pred) - pred - log(factorial(actu))
+# in raw score terms, this is the same as
+# actu * raw_score - exp(raw_score) - log(factorial(actu))
+
+# ! that is important, derivative is by the actual raw prediction
+# and we are taking the derivative of the loss function, not the likelihood
+
+# gradient by raw score: exp(raw_score) - actu
+# hessian: exp(raw_score)
+
+# from LightGBM documentation: 
+# *  loss = exp(f) - label * f
+# *  grad = exp(f) - label
+# *  hess = exp(f)
+
+# try to plot this whole thing
+
+# plot 1 - Poisson probability by actual - we won't use this
+
+rm(plot_tbl)
+plot_tbl <- data.table(k = seq(0,10))
+prediction <- 0.6
+plot_tbl[,probability := prediction ^ k * exp(-prediction) / factorial(k)]
+ggplot(data = plot_tbl, aes(x = k, y = probability)) + geom_point() + 
+  scale_x_continuous(breaks = pretty_breaks())
+
+# plot 2 - same but as function of predictions for a specific actual
+
+rm(plot_tbl)
+plot_tbl <- data.table(prediction = seq(0.1,5,by = 0.01))
+k <- 3
+plot_tbl[,probability := prediction ^ k * exp(-prediction) / factorial(k)]
+ggplot(data = plot_tbl, aes(x = prediction, y = probability)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+# also do log-likelihood while we are at it
+plot_tbl[,loglikelihood:=log(probability)]
+ggplot(data = plot_tbl, aes(x = prediction, y = loglikelihood)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+# and the raw_prediction, which is log(prediction)
+plot_tbl[,raw_prediction:=log(prediction)]
+ggplot(data = plot_tbl, aes(x = raw_prediction, y = loglikelihood)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+# now the loss
+plot_tbl[,loss:=-loglikelihood]
+ggplot(data = plot_tbl, aes(x = raw_prediction, y = loss)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+# add gradient and hessian
+plot_tbl[,gradient := prediction - k]
+plot_tbl[,hessian := prediction]
+ggplot(data = plot_tbl, aes(x = raw_prediction, y = gradient)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+ggplot(data = plot_tbl, aes(x = raw_prediction, y = hessian)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+
+# try to visualise the derivative at a given point
+
+plot_tbl[prediction == 2]
+
+derivative_line_x_middle <- plot_tbl[prediction == 2, raw_prediction]
+derivative_line_y_middle <- plot_tbl[prediction == 2, loss]
+derivative_line_slope <- plot_tbl[prediction == 2, gradient]
+
+derivative_line_x_1 <- 0
+derivative_line_x_2 <- 1
+derivative_line_y_1 <- derivative_line_y_middle + 
+  (derivative_line_x_1 - derivative_line_x_middle) * 
+  derivative_line_slope
+derivative_line_y_2 <- derivative_line_y_middle + 
+  (derivative_line_x_2 - derivative_line_x_middle) * 
+  derivative_line_slope
+
+ggplot(data = plot_tbl[raw_prediction >= 0], aes(x = raw_prediction, y = loss)) + geom_line() + 
+  geom_point(data = plot_tbl[prediction == 2]) + 
+  geom_line(data = data.table(
+    raw_prediction = c(derivative_line_x_1, derivative_line_x_2),
+    loss = c(derivative_line_y_1, derivative_line_y_2))) +
+  scale_x_continuous(breaks = pretty_breaks())
+
+# repeating the same for the gradient, of which the derivative is the hessian
+# so in the previous block, we change: 
+# raw_prediction to gradient, loss to raw_prediction, and gradient to hessian
+
+derivative_line_x_middle <- plot_tbl[prediction == 2, gradient]
+derivative_line_y_middle <- plot_tbl[prediction == 2, raw_prediction]
+derivative_line_slope <- plot_tbl[prediction == 2, hessian]
+
+derivative_line_x_1 <- -2
+derivative_line_x_2 <- 0
+derivative_line_y_1 <- derivative_line_y_middle + 
+  (derivative_line_x_1 - derivative_line_x_middle) * 
+  derivative_line_slope
+derivative_line_y_2 <- derivative_line_y_middle + 
+  (derivative_line_x_2 - derivative_line_x_middle) * 
+  derivative_line_slope
+
+ggplot(data = plot_tbl[raw_prediction >= 0], aes(x = gradient, y = raw_prediction)) + geom_line() + 
+  geom_point(data = plot_tbl[prediction == 2]) + 
+  # geom_line(data = data.table(
+  #   gradient = c(derivative_line_x_1, derivative_line_x_2),
+  #   raw_prediction = c(derivative_line_y_1, derivative_line_y_2))) +
+  scale_x_continuous(breaks = pretty_breaks())
+
+
+# NOTES ###################
+
+# still the best summary: 
+# https://xgboost.readthedocs.io/en/stable/tutorials/model.html
 
 
 
-
-
-# NOTES #####################################
-
-# in XGBoost, max_delta_step is set to 0.7 by default in Poisson regression (used to safeguard optimization)
-# https://xgboost.readthedocs.io/en/latest/parameter.html
-
-# when we start training, there is this line: Start training from score -0.390084
-# it starts from the overall expected value (which is sensible)
-
-# in LightGBM, there is this comment: the final max output of leaves is learning_rate * max_delta_step
-# there is a separate Poisson max_delta_step, which also changes the results. 
-# well this is annoying. poisson_max_delta_step and max_delta_step don't do the same thing
