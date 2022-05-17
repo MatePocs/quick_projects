@@ -278,18 +278,18 @@ hessian_r <- 86 * exp(-0.192178698 + 0.1356219900 + 0.7)
 # plot 1 - Poisson probability by actual - we won't use this
 
 rm(plot_tbl)
-plot_tbl <- data.table(k = seq(0,10))
+plot_tbl <- data.table(actual = seq(0,10))
 prediction <- 0.6
-plot_tbl[,probability := prediction ^ k * exp(-prediction) / factorial(k)]
-ggplot(data = plot_tbl, aes(x = k, y = probability)) + geom_point() + 
+plot_tbl[,probability := prediction ^ actual * exp(-prediction) / factorial(actual)]
+ggplot(data = plot_tbl, aes(x = actual, y = probability)) + geom_point() + 
   scale_x_continuous(breaks = pretty_breaks())
 
 # plot 2 - same but as function of predictions for a specific actual
 
 rm(plot_tbl)
 plot_tbl <- data.table(prediction = seq(0.1,5,by = 0.01))
-k <- 3
-plot_tbl[,probability := prediction ^ k * exp(-prediction) / factorial(k)]
+actual <- 3
+plot_tbl[,probability := prediction ^ actual * exp(-prediction) / factorial(actual)]
 ggplot(data = plot_tbl, aes(x = prediction, y = probability)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
 # also do log-likelihood while we are at it
@@ -301,18 +301,22 @@ plot_tbl[,raw_prediction:=log(prediction)]
 ggplot(data = plot_tbl, aes(x = raw_prediction, y = loglikelihood)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
 # now the loss
-plot_tbl[,loss:=-loglikelihood]
+plot_tbl[,loss:=exp(raw_prediction) - actual * raw_prediction]
 ggplot(data = plot_tbl, aes(x = raw_prediction, y = loss)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
 # add gradient and hessian
-plot_tbl[,gradient := prediction - k]
-plot_tbl[,hessian := prediction]
+plot_tbl[,gradient := exp(raw_prediction) - actual]
+plot_tbl[,hessian := exp(raw_prediction)]
 ggplot(data = plot_tbl, aes(x = raw_prediction, y = gradient)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
+ggplot(data = plot_tbl, aes(x = prediction, y = gradient)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
 ggplot(data = plot_tbl, aes(x = raw_prediction, y = hessian)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
+ggplot(data = plot_tbl, aes(x = prediction, y = hessian)) + geom_line() + 
+  scale_x_continuous(breaks = pretty_breaks())
 
-# try to visualise the derivative at a given point
+# try to visualise the derivative at a given point, what if we predict 2? 
 
 plot_tbl[prediction == 2]
 
