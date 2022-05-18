@@ -192,3 +192,39 @@ hessian = 575 * (abs(response_neg_1) * (0.7-abs(response_neg_1))) +
 
 # sigmoid function: 
 # https://en.wikipedia.org/wiki/Sigmoid_function
+
+log(0.4446064 / (1 - 0.4446064)) / 0.7
+exp(-0.3178395 * 0.7) / (1 + exp(-0.3178395 * 0.7))
+
+
+# theory: 
+# logloss with positive label: 
+# - yi * log(p(yi)) = - log(p(yi))   (because yi is 1)
+# the model works with raw_score = log(p / (1-p)) / sigmoid
+# so p = exp(raw_score * sigmoid) / (1 + exp(raw_score * sigmoid))
+# putting this in loss function and derivative by raw_score: 
+# gradient = - sigmoid / (1 + exp(raw_score * sigmoid))
+# this is response thingy in the LightGBM calculation
+
+# now, I think that the second order derivative is: 
+# sigmoid ^ 2 * exp(raw_score * sigmoid) / ((1 + exp(raw_score * sigmoid)) ^ 2)
+
+# question: is this the same as the response calculation? 
+
+p <- 0.8
+raw_score <- log(p / (1 - p)) / 0.7
+
+response <- -1 * 0.7 / (1 + exp(1 * 0.7 * raw_score))
+
+# is this the same as 
+- 0.7 / (1 + exp(0.7 * raw_score)) # yeah, sure
+
+# now, with the LightGBM calculations, hessian is: 
+(abs(response) * (0.7-abs(response))) # 0.0784
+
+# do I get the same from my own calculations?
+0.7 ^ 2 * exp(raw_score * 0.7) / (( 1 + exp(raw_score * 0.7)) ^ 2) # yes, same formula in different format 0.0784
+
+# let's do a chart with the positive labels
+
+

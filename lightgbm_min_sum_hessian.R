@@ -286,6 +286,8 @@ ggplot(data = plot_tbl, aes(x = actual, y = probability)) + geom_point() +
 
 # plot 2 - same but as function of predictions for a specific actual
 
+color1 <- 
+
 rm(plot_tbl)
 plot_tbl <- data.table(prediction = seq(0.1,5,by = 0.01))
 actual <- 3
@@ -301,7 +303,7 @@ plot_tbl[,raw_prediction:=log(prediction)]
 ggplot(data = plot_tbl, aes(x = raw_prediction, y = loglikelihood)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
 # now the loss
-plot_tbl[,loss:=exp(raw_prediction) - actual * raw_prediction]
+plot_tbl[,loss:=exp(raw_prediction) - actual * raw_prediction + log(factorial(actual))]
 ggplot(data = plot_tbl, aes(x = raw_prediction, y = loss)) + geom_line() + 
   scale_x_continuous(breaks = pretty_breaks())
 # add gradient and hessian
@@ -325,7 +327,7 @@ derivative_line_y_middle <- plot_tbl[prediction == 2, loss]
 derivative_line_slope <- plot_tbl[prediction == 2, gradient]
 
 derivative_line_x_1 <- 0
-derivative_line_x_2 <- 1
+derivative_line_x_2 <- 1.5
 derivative_line_y_1 <- derivative_line_y_middle + 
   (derivative_line_x_1 - derivative_line_x_middle) * 
   derivative_line_slope
@@ -342,14 +344,14 @@ ggplot(data = plot_tbl[raw_prediction >= 0], aes(x = raw_prediction, y = loss)) 
 
 # repeating the same for the gradient, of which the derivative is the hessian
 # so in the previous block, we change: 
-# raw_prediction to gradient, loss to raw_prediction, and gradient to hessian
+# loss to gradient, and gradient to hessian
 
-derivative_line_x_middle <- plot_tbl[prediction == 2, gradient]
-derivative_line_y_middle <- plot_tbl[prediction == 2, raw_prediction]
+derivative_line_x_middle <- plot_tbl[prediction == 2, raw_prediction]
+derivative_line_y_middle <- plot_tbl[prediction == 2, gradient]
 derivative_line_slope <- plot_tbl[prediction == 2, hessian]
 
-derivative_line_x_1 <- -2
-derivative_line_x_2 <- 0
+derivative_line_x_1 <- 0
+derivative_line_x_2 <- 1.5
 derivative_line_y_1 <- derivative_line_y_middle + 
   (derivative_line_x_1 - derivative_line_x_middle) * 
   derivative_line_slope
@@ -357,12 +359,12 @@ derivative_line_y_2 <- derivative_line_y_middle +
   (derivative_line_x_2 - derivative_line_x_middle) * 
   derivative_line_slope
 
-ggplot(data = plot_tbl[raw_prediction >= 0], aes(x = gradient, y = raw_prediction)) + geom_line() + 
+ggplot(data = plot_tbl[raw_prediction >= 0], aes(x = raw_prediction, y = gradient)) + geom_line() + 
   geom_point(data = plot_tbl[prediction == 2]) + 
-  # geom_line(data = data.table(
-  #   gradient = c(derivative_line_x_1, derivative_line_x_2),
-  #   raw_prediction = c(derivative_line_y_1, derivative_line_y_2))) +
-  scale_x_continuous(breaks = pretty_breaks())
+  geom_line(data = data.table(
+    raw_prediction = c(derivative_line_x_1, derivative_line_x_2),
+    gradient = c(derivative_line_y_1, derivative_line_y_2))) +
+  scale_x_continuous(breaks = pretty_breaks()) + 
 
 
 # NOTES ###################
