@@ -5,6 +5,8 @@
 
 library(lightgbm)
 library(data.table)
+library(ggplot2)
+
 
 # cleanup
 rm(list = ls())
@@ -226,5 +228,15 @@ response <- -1 * 0.7 / (1 + exp(1 * 0.7 * raw_score))
 0.7 ^ 2 * exp(raw_score * 0.7) / (( 1 + exp(raw_score * 0.7)) ^ 2) # yes, same formula in different format 0.0784
 
 # let's do a chart with the positive labels
+plot_tbl <- data.table(p = seq(0.01,0.99, 0.01))
+sigma <- 0.7
+plot_tbl[,raw_score := log(p / (1-p)) / sigma]
+plot_tbl[,hessian := sigma ^ 2 * exp(raw_score * sigma) / (( 1 + exp(raw_score * sigma)) ^ 2) ]
 
+library(ggplot2)
 
+p <- ggplot(data = plot_tbl, aes(x = p, y = hessian)) + geom_line(color = "darkblue") 
+
+ggsave(filename = "/Users/flatiron/Documents/DataScience/quick_projects/charts/binary_logloss_hessian.png", plot = p)
+
+plot_tbl
