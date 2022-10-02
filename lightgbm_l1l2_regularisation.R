@@ -40,7 +40,6 @@ generate_claim_counts <- function(dt, var_impact){
 # however, value 1 and 2 are supposed to generate the same value
 # we don't want the small difference due to random stuff pop up 
 
-
 ## data  ---------------------------
 
 set.seed(100)
@@ -54,11 +53,11 @@ var_impact <- data.table(
 
 data_curr <- generate_claim_counts(data_curr, var_impact)
 
-data_curr[,.(targt = mean(target), number = .N), keyby = var1]
-
 ## model ---------------------------------
 
-lambda_l1_to_check <- c(0, 1, 2, 5, 10, 100)
+lambda_l1_to_check <- c(0, 1, 2, 5, 10, 20, 50, 100, 200)
+
+lambda_l1_to_check <- seq(0,250,by=1)
 
 result_dt <- data.table()
 
@@ -98,12 +97,16 @@ for (curr_lambda in lambda_l1_to_check){
 
 result_dt
 
-curr_predictions
-
 data_curr[,.(lambda = lambda[1], number = .N, target = mean(target)), keyby = .(var1)]
 
-data_curr
+plot_dt <- melt.data.table(result_dt, id.vars = "lambda_l1")
+plot_dt
+p <- ggplot(data = plot_dt, aes(x = lambda_l1, y = value)) + 
+  geom_line(aes(colour = variable, linetype = variable), size = 2, position = position_dodge(width = 3))
+p
 
-data_curr[,.N, ke]
+
+result_dt
+
 
 
