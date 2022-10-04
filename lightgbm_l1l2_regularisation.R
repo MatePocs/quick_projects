@@ -23,10 +23,12 @@ gc()
 
 # FUNCTIONS ##############################
 
-split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, reg_lambda, reg_gamma){
+
+
+split_gain_old <- function(gradient_l, hessian_l, gradient_r, hessian_r, reg_lambda = 0, reg_gamma = 0){
  
   # same as in min_sum_hessian file
-  # interestingly enough, we did nt use the regularisation parameters there, but they are still in the functions
+  # does not work, in practice, I don't get the split gains with it
   return(
     ((gradient_l^2 / (hessian_l+reg_lambda)) + 
     (gradient_r^2 / (hessian_r+reg_lambda)) - 
@@ -34,6 +36,19 @@ split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, reg_lambda,
     reg_gamma
     ) 
 }
+
+
+split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 0, lambda_l2 = 0){
+  
+  # this is something I basically guessed
+  # ! only works if lambda l1 is increasing, as in, if the wj is positive for both
+  return(
+    (((gradient_l+lambda_l1)^2 / (hessian_l+lambda_l2)) + 
+       ((gradient_r+lambda_l1)^2 / (hessian_r+lambda_l2)) - 
+       ((gradient_l + gradient_r + lambda_l1)^2 / (hessian_l+hessian_r+lambda_l2)))) 
+}
+
+
 
 generate_claim_counts <- function(dt, var_impact){
   # careful, different from other functions of the same name
@@ -157,6 +172,8 @@ result_dt[125:150]
 # value 1 and 2 become the same at lambda l1 = 36, and they won't change anymore
 
 lgb_model_0 <- get_lgbm_model(data_curr, 0)
+lgb_model_1 <- get_lgbm_model(data_curr, 1)
+lgb_model_15 <- get_lgbm_model(data_curr, 15)
 lgb_model_36 <- get_lgbm_model(data_curr, 36)
 lgb_model_86 <- get_lgbm_model(data_curr, 86)
 lgb_model_87 <- get_lgbm_model(data_curr, 87)
@@ -165,6 +182,8 @@ lgb_model_126 <- get_lgbm_model(data_curr, 126)
 lgb_model_127 <- get_lgbm_model(data_curr, 127)
 
 tree_0 <- lgb.model.dt.tree(lgb_model_0)
+tree_1 <- lgb.model.dt.tree(lgb_model_1)
+tree_15 <- lgb.model.dt.tree(lgb_model_15)
 tree_36 <- lgb.model.dt.tree(lgb_model_36)
 tree_86 <- lgb.model.dt.tree(lgb_model_86)
 tree_87 <- lgb.model.dt.tree(lgb_model_87)
@@ -172,10 +191,79 @@ tree_100 <- lgb.model.dt.tree(lgb_model_100)
 tree_126 <- lgb.model.dt.tree(lgb_model_126)
 tree_127 <- lgb.model.dt.tree(lgb_model_127)
 
-## question 1 - 87 vs 126 --------------------------------
+## tree 0 -----------------------
+
+# let's try to recalculate values for model with 0 reg, the first tree
+tree_0[tree_index == 0,]
+
+# the left one, var1 == 0, with leaf_value of -0.7537717
+gradient_l <- 484 * 0.513 - 162
+hessian_l <- 484 * 0.513 * exp(0.7)
+(-gradient_l / hessian_l) * 0.5 +  -0.6674794 # -0.7537716, and it's important to note that the first leaf_values also include the average
+
+# other branch of the first split, interal_value of -0.5865387: 
+gradient_r <- 516 * 0.513 - 351
+hessian_r <- 516 * 0.513 * exp(0.7)
+(-gradient_r / hessian_r) * 0.5 +  -0.6674794  #  -0.5865386
+
+# for completeness' sake, let's to the two additional splits
+# the expected value at that point: exp(-0.5865387)
+
+gradient_l <- 297 * exp(-0.6674794  ) - 217
+hessian_l <- 297 * exp(-0.6674794  ) * exp(0.7)
+(-gradient_l / hessian_l) * 0.5 +  -0.6674794 # -0.5621415
+# note: we are not using the internal_value of the split for anything
+
+
+gradient_r <- 219 * exp(-0.6674794  ) - 134
+hessian_r <- 219 * exp(-0.6674794  ) * exp(0.7)
+(-gradient_r / hessian_r) * 0.5 +  -0.6674794 # -0.6196252
+
+# can we recalculate the split_gain? 1.721168
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r) # 1.721168, yes, great
+
+# it's important to note that mechanically, the leaf values of first tree also include the average predictions
+# second tree's values won't be as high: 
+tree_0[tree_index == 1,]
+
+## tree 1 ----------------------------
+
+tree_1[tree_index == 0,]
+
+# trying to get var1 = 0 leaf_value, -0.7527717
+gradient_l <- 484 * 0.513 - 162
+hessian_l <- 484 * 0.513 * exp(0.7)
+(-(gradient_l-1) / (hessian_l)) * 0.5 +  -0.6674794  # -0.7527716
+
+# what about other two leaf_values, for var1 = 1 and 2? 
+gradient_l <- 297 * 0.513 - 217
+hessian_l <- 297 * 0.513 * exp(0.7)
+(-(gradient_l+1) / (hessian_l)) * 0.5 +  -0.6674794  # -0.5637711
+
+# well that's great, but why are we suddenly adding the 1...? oh right, because of the sign of the gradient I guess
+# so it depends on whether we are going up or down from the current prediction, as in, the sign of current weight
+# (even if in practice we are rolling it in the overall average)
+# is that the same on the other branch? 
+gradient_r <- 219 * 0.513 - 134
+hessian_r <- 219 * 0.513 * exp(0.7)
+(-(gradient_r+1) / (hessian_r)) * 0.5 +  -0.6674794  # -0.6218352, great
+
+# note that the gradient itself in the first tree is the same as how the 0 started
+
+# now the big question: can we recalculate the split gain? 1.437966 ? we managed to do it for unregularised version
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0)
+
+# 1.437966, wow, i did not expect this!
+
+
+
+
+
+## trees 87 vs 126 --------------------------------
 
 # let's focus on a few at a time
 # what is the difference between 87 and 126? 
+
 
 tree_87
 tree_126
@@ -189,11 +277,16 @@ result_dt[lambda_l1 %in% c(87, 126)]
 0.513 * exp(0.1631051) # 0.6038833, the prediction from 126
 
 
+
 # let's try to recalculate the leaf value for 87, 0.2344141
 
 gradient_r <- 516 * 0.513 - 351
 hessian_r <- 516 * 0.513 * exp(0.7)
-(-gradient_r / (hessian_r + 87)) * 0.5
+
+((-gradient_r) / (hessian_r)) * 0.5
+
+
+((-gradient_r) / (hessian_r + 87)) * 0.5
 
 
 gradient_r
@@ -208,3 +301,5 @@ split_gain(gradient_l = 0, hessian_l = 1, gradient_r = gradient_r, hessian_r = h
 
 # still the best summary: 
 # https://xgboost.readthedocs.io/en/stable/tutorials/model.html
+
+# although it's not really accurate anymore
