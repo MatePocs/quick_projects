@@ -24,30 +24,16 @@ gc()
 # FUNCTIONS ##############################
 
 
-
-split_gain_old <- function(gradient_l, hessian_l, gradient_r, hessian_r, reg_lambda = 0, reg_gamma = 0){
- 
-  # same as in min_sum_hessian file
-  # does not work, in practice, I don't get the split gains with it
-  return(
-    ((gradient_l^2 / (hessian_l+reg_lambda)) + 
-    (gradient_r^2 / (hessian_r+reg_lambda)) - 
-    ((gradient_l + gradient_r)^2 / (hessian_l+hessian_r+reg_lambda))) - 
-    reg_gamma
-    ) 
-}
-
-
 split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 0, lambda_l2 = 0){
   
   # this is something I basically guessed
-  # ! only works if lambda l1 is increasing, as in, if the wj is positive for both
+  # TODO
+  # for now this only works for positive gradient - I am not sure what would happen with last term....
   return(
-    (((gradient_l+lambda_l1)^2 / (hessian_l+lambda_l2)) + 
-       ((gradient_r+lambda_l1)^2 / (hessian_r+lambda_l2)) - 
+    (((gradient_l - sign(gradient_l) * lambda_l1)^2 / (hessian_l+lambda_l2)) + 
+       ((gradient_r - sign(gradient_r) * lambda_l1)^2 / (hessian_r+lambda_l2)) - 
        ((gradient_l + gradient_r + lambda_l1)^2 / (hessian_l+hessian_r+lambda_l2)))) 
 }
-
 
 
 generate_claim_counts <- function(dt, var_impact){
@@ -82,7 +68,7 @@ data_curr <- generate_claim_counts(data_curr, var_impact)
 ## model ---------------------------------
 
 # lambda_l1_to_check <- c(0, 1, 2, 5, 10, 20, 50, 100, 200)
-lambda_l1_to_check <- seq(0,250,by=1)
+lambda_l1_to_check <- seq(0,200,by=1)
 # lambda_l1_to_check <- seq(0,1,by=0.01)
 
 result_dt <- data.table()
@@ -191,6 +177,84 @@ tree_100 <- lgb.model.dt.tree(lgb_model_100)
 tree_126 <- lgb.model.dt.tree(lgb_model_126)
 tree_127 <- lgb.model.dt.tree(lgb_model_127)
 
+## hypothetical testing -----------------------
+
+# this is going to be a bit weird, but we need to do some tests on whether the regularisation improved anything
+# we basically want to say how 'good' approximation a Poisson x is of a real Poisson y...
+# there might be some close formulas for this (e.g. which is a bettern prediction for a Poisson 0.5: 0.4 or 0.6?)
+# but I think it will be straightforward to just do a giant test
+
+data_test <- data.table(
+  var1 = sample(c(0,1,2), prob = c(0.5, 0.3, 0.2), size = 1000000, replace = TRUE))
+
+data_test <- generate_claim_counts(data_test, var_impact)
+
+data_test[,mean(target), keyby = var1]
+
+data_test[var1==0,pred_0:=result_dt[lambda_l1==0,value_0_predict]]
+data_test[var1==1,pred_0:=result_dt[lambda_l1==0,value_1_predict]]
+data_test[var1==2,pred_0:=result_dt[lambda_l1==0,value_2_predict]]
+data_test[,poisson_likelihood_0:=pred_0^target*exp(-pred_0)/factorial(3)]
+data_test[,poisson_loglikelihood_0:=log(poisson_likelihood_0)]
+
+data_test[var1==0,pred_1:=result_dt[lambda_l1==1,value_0_predict]]
+data_test[var1==1,pred_1:=result_dt[lambda_l1==1,value_1_predict]]
+data_test[var1==2,pred_1:=result_dt[lambda_l1==1,value_2_predict]]
+data_test[,poisson_likelihood_1:=pred_1^target*exp(-pred_1)/factorial(3)]
+data_test[,poisson_loglikelihood_1:=log(poisson_likelihood_1)]
+
+data_test[,mean(poisson_loglikelihood_0)]
+data_test[,mean(poisson_loglikelihood_1)]
+
+# sadly, it goes down
+
+# let's collect these in one large table (and a chart!)
+
+likelihood_dt <- data.table()
+
+for (curr_lambda in lambda_l1_to_check){
+  
+  cat(paste0('currently checking lambda l1: ', curr_lambda)); cat('\n')
+  
+  data_test[var1==0,pred:=result_dt[lambda_l1==curr_lambda,value_0_predict]]
+  data_test[var1==1,pred:=result_dt[lambda_l1==curr_lambda,value_1_predict]]
+  data_test[var1==2,pred:=result_dt[lambda_l1==curr_lambda,value_2_predict]]
+  data_test[,poisson_likelihood:=pred^target*exp(-pred)/factorial(pred)]
+  data_test[,poisson_loglikelihood:=log(poisson_likelihood)]
+  
+  curr_likelihood_dt <- data.table(
+    lambda_l1 = c(curr_lambda), 
+    mean_poisson_loglikelihood_value_0 = c(mean(data_test[var1==0,poisson_loglikelihood])),
+    mean_poisson_loglikelihood_value_1 = c(mean(data_test[var1==1,poisson_loglikelihood])),
+    mean_poisson_loglikelihood_value_2 = c(mean(data_test[var1==2,poisson_loglikelihood])),
+    mean_poisson_loglikelihood_value_total = c(mean(data_test[,poisson_loglikelihood])))
+  
+  likelihood_dt <- rbind(likelihood_dt, curr_likelihood_dt)
+  
+}
+
+likelihood_dt
+
+plot_dt <- melt.data.table(likelihood_dt, id.vars = c("lambda_l1"))
+plot_dt
+
+ggplot(plot_dt, aes(x = lambda_l1, y = value, colour = variable)) + geom_line()
+
+likelihood_dt[order(mean_poisson_loglikelihood_value_total)]
+
+likelihood_dt[lambda_l1 %in% c(0, 20)]
+
+484 *  -0.5527274 + 297 * -0.8482205 + 219 * -0.8437741
+
+# this is super interesting, turns out, at lambda_l1 = 20, the loglikelihood is the highest
+
+result_dt[lambda_l1 == 20]
+
+#    lambda_l1 value_0_predict value_1_predict value_2_predict
+# 1:        20       0.3760331       0.6632997       0.6118721
+
+# this is apparently bettern than the starting predictions
+
 ## tree 0 -----------------------
 
 # let's try to recalculate values for model with 0 reg, the first tree
@@ -214,7 +278,6 @@ hessian_l <- 297 * exp(-0.6674794  ) * exp(0.7)
 (-gradient_l / hessian_l) * 0.5 +  -0.6674794 # -0.5621415
 # note: we are not using the internal_value of the split for anything
 
-
 gradient_r <- 219 * exp(-0.6674794  ) - 134
 hessian_r <- 219 * exp(-0.6674794  ) * exp(0.7)
 (-gradient_r / hessian_r) * 0.5 +  -0.6674794 # -0.6196252
@@ -224,6 +287,7 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r) # 1.721168, yes, great
 
 # it's important to note that mechanically, the leaf values of first tree also include the average predictions
 # second tree's values won't be as high: 
+
 tree_0[tree_index == 1,]
 
 ## tree 1 ----------------------------
@@ -252,13 +316,81 @@ hessian_r <- 219 * 0.513 * exp(0.7)
 
 # now the big question: can we recalculate the split gain? 1.437966 ? we managed to do it for unregularised version
 split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0)
-
 # 1.437966, wow, i did not expect this!
 
+# other interesting question: why does group 2's prediction not change? the first leaf is different from tree 0 
+tree_0[!is.na(leaf_count),.(pred = exp(sum(leaf_value))), keyby = leaf_count]
+#   leaf_count      pred
+# 1:        219 0.6118722
+# 2:        297 0.7306397
+# 3:        484 0.3347107
+# yes, we knew that, I was just checking 
+
+tree_1[!is.na(leaf_count),.(raw_pred = (sum(leaf_value)), number_of_leaves = .N), keyby = leaf_count]
+#   leaf_count    raw_pred number_of_leaves
+# 1:        219 -0.52828497               32
+# 2:        297 -0.35550676               36
+# 3:        484 -1.08833469               62
+# 4:        516  0.03705302               30
+# 5:        703  0.00000000                4
+
+# interesting, so we have versions where value 1 and 2 are not separated 
+# the predictions for value 2 group are: 
+exp(-0.52828497 + 0.03705302) # 0.6118721, which I find very weird
+
+# let's check a tree where the two are not separated
+tree_1[leaf_count == 516]
+tree_1[tree_index == 5,]
+
+# for some reason, the values are not split in the index 5 tree, let's try to find out why
+
+# up until that point, our predictions are going to be: 
+tree_1[tree_index < 5 & !is.na(leaf_count), .(raw_pred = sum(leaf_value)), keyby=leaf_count]
+#    leaf_count   raw_pred
+# 1:        219 -0.5358633
+# 2:        297 -0.3882703
+# 3:        484 -0.9645786
+
+# the two leaf values, -0.02890242 and 0.01537969, are calculated as: 
+gradient_l <- 484 * exp(-0.9645786) - 162
+hessian_l <- 484 * exp(-0.9645786) * exp(0.7)
+(-(gradient_l-1) / (hessian_l)) * 0.5
+
+gradient_r <- (219 * exp(-0.5358633) + 297 * exp(-0.3882703)) - 351
+hessian_r <- (219 * exp(-0.5358633) + 297 * exp(-0.3882703)) * exp(0.7)
+(-(gradient_r+1) / hessian_r) * 0.5
+  
+#just for fun, the split gain: 
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0)
+
+# TODO: still don't have the split!!! i suspect something with the 3rd term, 
+# what happens if one increases other decreases  
+  
 
 
+# for now: why don't we split further the values 1 and 2? 
+
+gradient_l <- (219 * exp(-0.5358633)) - 134
+hessian_l <- (219 * exp(-0.5358633)) * exp(0.7)
+(-(gradient_l+1) / hessian_l) * 0.5
+# i think this would have worked
+
+gradient_r <- (297 * exp(-0.3882703)) - 217
+hessian_r <- (297 * exp(-0.3882703)) * exp(0.7)
+(-(gradient_r+1) / hessian_r) * 0.5
 
 
+# what about split gain? 
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0)
+# -0.01379265
+# ah. so the key thing is that the split gain would have been negative
+# assuming I calculated it correctly of course
+
+## split_gain --------------------------------
+
+# we need to better understand how the split_gain is calculated, what it actually means
+
+  
 ## trees 87 vs 126 --------------------------------
 
 # let's focus on a few at a time
