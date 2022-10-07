@@ -28,11 +28,12 @@ split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 =
   
   # this is something I basically guessed
   # TODO
-  # for now this only works for positive gradient - I am not sure what would happen with last term....
+  # for now this does not work with lambda_l2!!!
+  # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
   return(
     (((gradient_l - sign(gradient_l) * lambda_l1)^2 / (hessian_l+lambda_l2)) + 
        ((gradient_r - sign(gradient_r) * lambda_l1)^2 / (hessian_r+lambda_l2)) - 
-       ((gradient_l + gradient_r + lambda_l1)^2 / (hessian_l+hessian_r+lambda_l2)))) 
+       ((gradient_l + gradient_r + sign(gradient_l) * sign(gradient_r) * lambda_l1)^2 / (hessian_l+hessian_r+lambda_l2)))) 
 }
 
 
@@ -44,34 +45,6 @@ generate_claim_counts <- function(dt, var_impact){
   dt[, target := random_pois]
   return(dt)
 }
-
-
-# SCENARIO 1 ########################
-
-# we have one categorical feature with 3 different values
-# however, value 1 and 2 are supposed to generate the same value
-# we don't want the small difference due to random stuff pop up 
-
-## data  ---------------------------
-
-set.seed(100)
-
-data_curr <- data.table(
-  var1 = sample(c(0,1,2), prob = c(0.5, 0.3, 0.2), size = 1000, replace = TRUE))
-
-var_impact <- data.table(
-  var1 = c(0,1,2),
-  lambda = c(0.3, 0.7, 0.7))
-
-data_curr <- generate_claim_counts(data_curr, var_impact)
-
-## model ---------------------------------
-
-# lambda_l1_to_check <- c(0, 1, 2, 5, 10, 20, 50, 100, 200)
-lambda_l1_to_check <- seq(0,200,by=1)
-# lambda_l1_to_check <- seq(0,1,by=0.01)
-
-result_dt <- data.table()
 
 get_lgbm_model <- function(data_input, lambda_l1_input){
   
@@ -94,6 +67,52 @@ get_lgbm_model <- function(data_input, lambda_l1_input){
   return(lgb_model)
 }
 
+# SCENARIO 1 ########################
+
+# we have one categorical feature with 3 different values
+# however, value 1 and 2 are supposed to generate the same value
+# we don't want the small difference due to random stuff pop up 
+
+## data  ---------------------------
+
+set.seed(100)
+
+data_curr <- data.table(
+  var1 = sample(c(0,1,2), prob = c(0.5, 0.3, 0.2), size = 1000, replace = TRUE))
+
+var_impact <- data.table(
+  var1 = c(0,1,2),
+  lambda = c(0.3, 0.7, 0.7))
+
+data_curr <- generate_claim_counts(data_curr, var_impact)
+
+# in case you want to replicate: 
+
+data_curr[,.N, keyby = .(var1, target)]
+#     var1 target   N
+# 1:     0      0 349
+# 2:     0      1 113
+# 3:     0      2  18
+# 4:     0      3   3
+# 5:     0      4   1
+# 6:     1      0 150
+# 7:     1      1  93
+# 8:     1      2  39
+# 9:     1      3  14
+# 10:    1      4   1
+# 11:    2      0 121
+# 12:    2      1  69
+# 13:    2      2  22
+# 14:    2      3   7
+
+## model fits ---------------------------------
+
+# lambda_l1_to_check <- c(0, 1, 2, 5, 10, 20, 50, 100, 200)
+lambda_l1_to_check <- seq(0,200,by=1)
+# lambda_l1_to_check <- seq(0,1,by=0.01)
+
+result_dt <- data.table()
+
 for (curr_lambda in lambda_l1_to_check){
   
   cat(paste0('currently checking lambda l1: ', curr_lambda)); cat('\n')
@@ -104,9 +123,9 @@ for (curr_lambda in lambda_l1_to_check){
   curr_predictions <-  predict(lgb_model, dtest_data)
   
   curr_result_dt <- data.table(lambda_l1 = curr_lambda,  
-                               value_0_predict = curr_predictions[1],
-                               value_1_predict = curr_predictions[2],
-                               value_2_predict = curr_predictions[3])
+                               group_0_predict = curr_predictions[1],
+                               group_1_predict = curr_predictions[2],
+                               group_2_predict = curr_predictions[3])
   # kind of a weird solution here
   
   result_dt <- rbind(result_dt, curr_result_dt)
@@ -117,8 +136,8 @@ for (curr_lambda in lambda_l1_to_check){
 plot_line_shift <- 0.005
 plot_dt <- melt.data.table(result_dt, id.vars = "lambda_l1")
 # need to tweak it a bit so the plot line overlaps won't look weird
-plot_dt[variable == "value_0_predict", value := value - plot_line_shift]
-plot_dt[variable == "value_1_predict", value := value + plot_line_shift]
+plot_dt[variable == "group_0_predict", value := value - plot_line_shift]
+plot_dt[variable == "group_1_predict", value := value + plot_line_shift]
 p <- ggplot(data = plot_dt, aes(x = lambda_l1, y = value)) + 
   geom_line(aes(colour = variable), size = 2)
 p
@@ -184,31 +203,23 @@ tree_127 <- lgb.model.dt.tree(lgb_model_127)
 # there might be some close formulas for this (e.g. which is a bettern prediction for a Poisson 0.5: 0.4 or 0.6?)
 # but I think it will be straightforward to just do a giant test
 
+set.seed(100)
+
 data_test <- data.table(
   var1 = sample(c(0,1,2), prob = c(0.5, 0.3, 0.2), size = 1000000, replace = TRUE))
 
 data_test <- generate_claim_counts(data_test, var_impact)
 
 data_test[,mean(target), keyby = var1]
+#    var1        V1
+# 1:    0 0.3012164
+# 2:    1 0.7010834
+# 3:    2 0.6980534
 
-data_test[var1==0,pred_0:=result_dt[lambda_l1==0,value_0_predict]]
-data_test[var1==1,pred_0:=result_dt[lambda_l1==0,value_1_predict]]
-data_test[var1==2,pred_0:=result_dt[lambda_l1==0,value_2_predict]]
-data_test[,poisson_likelihood_0:=pred_0^target*exp(-pred_0)/factorial(3)]
-data_test[,poisson_loglikelihood_0:=log(poisson_likelihood_0)]
+# OK, it's much closer to the Poisson lambdas
 
-data_test[var1==0,pred_1:=result_dt[lambda_l1==1,value_0_predict]]
-data_test[var1==1,pred_1:=result_dt[lambda_l1==1,value_1_predict]]
-data_test[var1==2,pred_1:=result_dt[lambda_l1==1,value_2_predict]]
-data_test[,poisson_likelihood_1:=pred_1^target*exp(-pred_1)/factorial(3)]
-data_test[,poisson_loglikelihood_1:=log(poisson_likelihood_1)]
-
-data_test[,mean(poisson_loglikelihood_0)]
-data_test[,mean(poisson_loglikelihood_1)]
-
-# sadly, it goes down
-
-# let's collect these in one large table (and a chart!)
+lambda_l1_to_check <- seq(0,200,by=1)
+lambda_l1_to_check <- c(0,20)
 
 likelihood_dt <- data.table()
 
@@ -216,18 +227,18 @@ for (curr_lambda in lambda_l1_to_check){
   
   cat(paste0('currently checking lambda l1: ', curr_lambda)); cat('\n')
   
-  data_test[var1==0,pred:=result_dt[lambda_l1==curr_lambda,value_0_predict]]
-  data_test[var1==1,pred:=result_dt[lambda_l1==curr_lambda,value_1_predict]]
-  data_test[var1==2,pred:=result_dt[lambda_l1==curr_lambda,value_2_predict]]
+  data_test[var1==0,pred:=result_dt[lambda_l1==curr_lambda,group_0_predict]]
+  data_test[var1==1,pred:=result_dt[lambda_l1==curr_lambda,group_1_predict]]
+  data_test[var1==2,pred:=result_dt[lambda_l1==curr_lambda,group_2_predict]]
   data_test[,poisson_likelihood:=pred^target*exp(-pred)/factorial(pred)]
   data_test[,poisson_loglikelihood:=log(poisson_likelihood)]
   
   curr_likelihood_dt <- data.table(
     lambda_l1 = c(curr_lambda), 
-    mean_poisson_loglikelihood_value_0 = c(mean(data_test[var1==0,poisson_loglikelihood])),
-    mean_poisson_loglikelihood_value_1 = c(mean(data_test[var1==1,poisson_loglikelihood])),
-    mean_poisson_loglikelihood_value_2 = c(mean(data_test[var1==2,poisson_loglikelihood])),
-    mean_poisson_loglikelihood_value_total = c(mean(data_test[,poisson_loglikelihood])))
+    mean_poisson_loglikelihood_group_0 = c(mean(data_test[var1==0,poisson_loglikelihood])),
+    mean_poisson_loglikelihood_group_1 = c(mean(data_test[var1==1,poisson_loglikelihood])),
+    mean_poisson_loglikelihood_group_2 = c(mean(data_test[var1==2,poisson_loglikelihood])),
+    mean_poisson_loglikelihood = c(mean(data_test[,poisson_loglikelihood])))
   
   likelihood_dt <- rbind(likelihood_dt, curr_likelihood_dt)
   
@@ -236,26 +247,24 @@ for (curr_lambda in lambda_l1_to_check){
 likelihood_dt
 
 plot_dt <- melt.data.table(likelihood_dt, id.vars = c("lambda_l1"))
-plot_dt
-
 ggplot(plot_dt, aes(x = lambda_l1, y = value, colour = variable)) + geom_line()
 
-likelihood_dt[order(mean_poisson_loglikelihood_value_total)]
+likelihood_dt[order(mean_poisson_loglikelihood)]
 
 likelihood_dt[lambda_l1 %in% c(0, 20)]
-
-484 *  -0.5527274 + 297 * -0.8482205 + 219 * -0.8437741
 
 # this is super interesting, turns out, at lambda_l1 = 20, the loglikelihood is the highest
 
 result_dt[lambda_l1 == 20]
-
 #    lambda_l1 value_0_predict value_1_predict value_2_predict
 # 1:        20       0.3760331       0.6632997       0.6118721
 
 # this is apparently bettern than the starting predictions
+# ok, great, so it makes some sense to do regularisation 
+# based on the chart, increasing over 50 is quite pointless
 
-## tree 0 -----------------------
+
+## lambda l1 0 -----------------------
 
 # let's try to recalculate values for model with 0 reg, the first tree
 tree_0[tree_index == 0,]
@@ -290,7 +299,7 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r) # 1.721168, yes, great
 
 tree_0[tree_index == 1,]
 
-## tree 1 ----------------------------
+## lambda l1 1 ----------------------------
 
 tree_1[tree_index == 0,]
 
@@ -361,11 +370,7 @@ hessian_r <- (219 * exp(-0.5358633) + 297 * exp(-0.3882703)) * exp(0.7)
 (-(gradient_r+1) / hessian_r) * 0.5
   
 #just for fun, the split gain: 
-split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0)
-
-# TODO: still don't have the split!!! i suspect something with the 3rd term, 
-# what happens if one increases other decreases  
-  
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0) # 1.869231
 
 
 # for now: why don't we split further the values 1 and 2? 
@@ -386,52 +391,51 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l
 # ah. so the key thing is that the split gain would have been negative
 # assuming I calculated it correctly of course
 
-## split_gain --------------------------------
+# and now the final question: why aren't we splitting any further? 
+# it consists of 66 trees, by the end, the predictions are: 
 
-# we need to better understand how the split_gain is calculated, what it actually means
+result_dt[lambda_l1 == 1]
+
+#    lambda_l1 group_0_predict group_1_predict group_2_predict
+# 1:         1       0.3367769       0.7272727       0.6118721
+
+# this was the last tree: 
+tree_1[tree_index == 65,]
+
+#now let's imagine that we want to split, by group 0 and 1+2
+
+gradient_l <- (484 * 0.3367769) - 162
+hessian_l <-  (484 * 0.3367769) * exp(0.7)
+(-(gradient_l-1) / hessian_l) * 0.5 # tiny amount
+
+gradient_r <- (297 * 0.7272727 + 219 * 0.6118721) - 351
+hessian_r <-  (297 * 0.7272727 + 219 * 0.6118721) * exp(0.7)
+(-(gradient_r-1) / hessian_r) * 0.5 # same, tiny amount
+
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0) # negative, great -0.001008118
+
+# all right, one last question: what does the split gein actually represent? 
+# let's try to show why the 66th cut is still made and why the 67th is not
+
+
+
+
+
+
+
+## lambda l1 15 -----------------------
+
+# let's try a higher lambda l1 just to make sure my formulas work 
+# (I suspect the third them of the split gain will need to be on the 2nd power)
 
   
-## trees 87 vs 126 --------------------------------
-
-# let's focus on a few at a time
-# what is the difference between 87 and 126? 
-
-
-tree_87
-tree_126
-
-result_dt[lambda_l1 %in% c(87, 126)]
-#     lambda_l1 value_0_predict value_1_predict value_2_predict
-# 1:        87           0.513       0.6485181       0.6485181
-# 2:       126           0.513       0.6038833       0.6038833
-
-0.513 * exp(0.2344141) # 0.6485181, the prediction from 87
-0.513 * exp(0.1631051) # 0.6038833, the prediction from 126
-
-
-
-# let's try to recalculate the leaf value for 87, 0.2344141
-
-gradient_r <- 516 * 0.513 - 351
-hessian_r <- 516 * 0.513 * exp(0.7)
-
-((-gradient_r) / (hessian_r)) * 0.5
-
-
-((-gradient_r) / (hessian_r + 87)) * 0.5
-
-
-gradient_r
-# -86.29199 - a number between 86 and 87. coincidence? i think not!
-hessian_r
-
-split_gain(gradient_l = 0, hessian_l = 1, gradient_r = gradient_r, hessian_r = hessian_r, 
-           reg_lambda = 0, reg_gamma = 87)
-
 
 # NOTES ###################
 
 # still the best summary: 
 # https://xgboost.readthedocs.io/en/stable/tutorials/model.html
 
-# although it's not really accurate anymore
+# although it's not really accurate anymore.... lambda_l1 is not documented as it behaves
+# to be fair, the two regularisation parameters is the document are different - interestingly, there's one
+# that seemingly penalises the number of leaves, which is an interesting concept, but I don't think
+# we actually have a hyperparameter for it
