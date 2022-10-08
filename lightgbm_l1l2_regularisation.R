@@ -23,20 +23,6 @@ gc()
 
 # FUNCTIONS ##############################
 
-
-split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 0, lambda_l2 = 0){
-  
-  # this is something I basically guessed
-  # TODO
-  # for now this does not work with lambda_l2!!!
-  # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
-  return(
-    (((gradient_l - sign(gradient_l) * lambda_l1)^2 / (hessian_l+lambda_l2)) + 
-       ((gradient_r - sign(gradient_r) * lambda_l1)^2 / (hessian_r+lambda_l2)) - 
-       ((gradient_l + gradient_r + sign(gradient_l) * sign(gradient_r) * lambda_l1)^2 / (hessian_l+hessian_r+lambda_l2)))) 
-}
-
-
 generate_claim_counts <- function(dt, var_impact){
   # careful, different from other functions of the same name
   # assumes dt only have columns to merge onto var_impact
@@ -412,15 +398,7 @@ gradient_r <- (297 * 0.7272727 + 219 * 0.6118721) - 351
 hessian_r <-  (297 * 0.7272727 + 219 * 0.6118721) * exp(0.7)
 (-(gradient_r-1) / hessian_r) * 0.5 # same, tiny amount
 
-split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0) # negative, great -0.001008118
-
-# all right, one last question: what does the split gein actually represent? 
-# let's try to show why the 66th cut is still made and why the 67th is not
-
-
-
-
-
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l2 = 0) # negative, great -0.0009679998
 
 
 ## lambda l1 15 -----------------------
@@ -428,7 +406,81 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l
 # let's try a higher lambda l1 just to make sure my formulas work 
 # (I suspect the third them of the split gain will need to be on the 2nd power)
 
+# first tree, index 0
+tree_15[tree_index == 0,]
+
+gradient_l <- (484 * 0.513) - 162
+hessian_l <-  (484 * 0.513) * exp(0.7)
+(-(gradient_l-15) / hessian_l) * 0.5  + log(0.513) # -0.7387716
+
+gradient_r <- (516 * 0.513) - 351
+hessian_r <-  (516 * 0.513) * exp(0.7)
+(-(gradient_r+15) / hessian_r) * 0.5 + log(0.513) # -0.6006085
   
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) 
+
+# second tree, index 1
+tree_15[tree_index == 1,]
+
+gradient_l <- (484 * exp(-0.7387716)) - 162
+hessian_l <-  (484 * exp(-0.7387716)) * exp(0.7)
+(-(gradient_l-15) / hessian_l) * 0.5   # -0.05821275
+
+gradient_r <- (516 * exp(-0.6006085)) - 351
+hessian_r <-  (516 * exp(-0.6006085)) * exp(0.7)
+(-(gradient_r+15) / hessian_r) * 0.5  # 0.04648489
+
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) 
+
+# hm, not exactly matching...
+
+threshold_l1 <- function(s, l1){
+  
+  # based on LightGBM feature_histogram.hpp ThresholdL1 function
+  # basically, we want to subtract the l1, but only until 0
+  
+  
+}
+
+split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 0, lambda_l2 = 0){
+  
+  # this is something I basically guessed
+  # TODO
+  # for now this does not work with lambda_l2!!!
+  # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
+  
+  leaf_gain_l <- (gradient_l - sign(gradient_l) * lambda_l1) ^ 2 / (hessian_l + lambda_l2)
+  leaf_gain_r <- (gradient_r - sign(gradient_r) * lambda_l1) ^ 2 / (hessian_r + lambda_l2)
+  original_gain <- (gradient_l + gradient_r - sign(gradient_l + gradient_r) * lambda_l1) ^ 2 / 
+    (hessian_l + hessian_r + lambda_l2)
+  
+  gains <- list()
+  gains$left <- leaf_gain_l
+  gains$right <- leaf_gain_r
+  gains$original <- original_gain
+  gains$total <- leaf_gain_l + leaf_gain_r - original_gain
+  
+  return(gains)
+  
+}
+
+
+data_curr[,.(lambda = lambda[1], number = .N, mean_target = mean(target), sum_target = sum(target)), keyby = .(var1)]
+data_curr[,mean(target)]
+
+
+
+
+
+# all right, one last question: what does the split gein actually represent? 
+# let's try to show why the xth cut is still made and why the x+1th is not
+# showing it with 15 so rounding impacts are minimal
+
+
+
+
+
+
 
 # NOTES ###################
 
@@ -439,3 +491,12 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l
 # to be fair, the two regularisation parameters is the document are different - interestingly, there's one
 # that seemingly penalises the number of leaves, which is an interesting concept, but I don't think
 # we actually have a hyperparameter for it
+
+
+# might be relevant from github: 
+# https://github.com/microsoft/LightGBM/blob/6b56a90cd1324a6dbac2afa0a352c9355b0dc3cf/src/treelearner/cuda/cuda_leaf_splits.hpp
+# https://github.com/microsoft/LightGBM/blob/346f88398282c5677dcaa880e147026eadba29e4/src/treelearner/feature_histogram.hpp
+
+# yes, key is in the second one, GetLeafGain function 
+
+# also super important: ThresholdL1
