@@ -32,6 +32,46 @@ generate_claim_counts <- function(dt, var_impact){
   return(dt)
 }
 
+threshold_l1 <- function(s, l1){
+  
+  # based on LightGBM feature_histogram.hpp ThresholdL1 function
+  # basically, we want to subtract the l1, but only until 0, so it doesn't change signum
+  
+  result <- s - sign(s) * l1
+  
+  if(sign(result) != sign(s)){
+    result <- 0
+  }
+  
+  return(result)
+}
+
+leaf_gain <- function(gradient, hessian, lambda_l1, lambda_l2){
+  
+  # TODO
+  # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
+  # but I haven't specificzlly tested lambda_l2 yet
+  
+  return((threshold_l1(gradient, lambda_l1)) ^ 2 / (hessian + lambda_l2))
+}
+
+split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 0, lambda_l2 = 0){
+  
+  leaf_gain_l <- leaf_gain(gradient_l, hessian_l, lambda_l1, lambda_l2)
+  leaf_gain_r <- leaf_gain(gradient_r, hessian_r, lambda_l1, lambda_l2)
+  original_gain <- leaf_gain(gradient_l + gradient_r, hessian_l + hessian_r, lambda_l1, lambda_l2)
+  
+  gains <- list()
+  gains$left <- leaf_gain_l
+  gains$right <- leaf_gain_r
+  gains$original <- original_gain
+  gains$total <- leaf_gain_l + leaf_gain_r - original_gain
+  
+  return(gains)
+  
+}
+
+
 get_lgbm_model <- function(data_input, lambda_l1_input){
   
   dtrain_data <- as.matrix(data_input[,.(var1)])
@@ -265,6 +305,8 @@ gradient_r <- 516 * 0.513 - 351
 hessian_r <- 516 * 0.513 * exp(0.7)
 (-gradient_r / hessian_r) * 0.5 +  -0.6674794  #  -0.5865386
 
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r) # 28.86174, yes, great
+
 # for completeness' sake, let's to the two additional splits
 # the expected value at that point: exp(-0.5865387)
 
@@ -430,55 +472,21 @@ gradient_r <- (516 * exp(-0.6006085)) - 351
 hessian_r <-  (516 * exp(-0.6006085)) * exp(0.7)
 (-(gradient_r+15) / hessian_r) * 0.5  # 0.04648489
 
-split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) 
-
-# hm, not exactly matching...
-
-threshold_l1 <- function(s, l1){
-  
-  # based on LightGBM feature_histogram.hpp ThresholdL1 function
-  # basically, we want to subtract the l1, but only until 0
-  
-  
-}
-
-split_gain <- function(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 0, lambda_l2 = 0){
-  
-  # this is something I basically guessed
-  # TODO
-  # for now this does not work with lambda_l2!!!
-  # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
-  
-  leaf_gain_l <- (gradient_l - sign(gradient_l) * lambda_l1) ^ 2 / (hessian_l + lambda_l2)
-  leaf_gain_r <- (gradient_r - sign(gradient_r) * lambda_l1) ^ 2 / (hessian_r + lambda_l2)
-  original_gain <- (gradient_l + gradient_r - sign(gradient_l + gradient_r) * lambda_l1) ^ 2 / 
-    (hessian_l + hessian_r + lambda_l2)
-  
-  gains <- list()
-  gains$left <- leaf_gain_l
-  gains$right <- leaf_gain_r
-  gains$original <- original_gain
-  gains$total <- leaf_gain_l + leaf_gain_r - original_gain
-  
-  return(gains)
-  
-}
-
-
-data_curr[,.(lambda = lambda[1], number = .N, mean_target = mean(target), sum_target = sum(target)), keyby = .(var1)]
-data_curr[,mean(target)]
-
-
-
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) # 11.23712, beautiful
 
 
 # all right, one last question: what does the split gein actually represent? 
-# let's try to show why the xth cut is still made and why the x+1th is not
+# let's try to show why the 71th cut is still made and why the 72th is not
 # showing it with 15 so rounding impacts are minimal
 
+tree_15[tree_index == 70,]
 
-
-
+# let's see what happens up until the 70th tree, so before the last split
+dtest_data <- as.matrix(data.table(var1 = c(0,1,2))) # we only need the 3 basic predictions
+tree_15_predictions_69 <-  predict(lgb_model_15, dtest_data, num_iteration = 60)
+tree_15_predictions_69
+tree_15_predictions_70 <-  predict(lgb_model_15, dtest_data, num_iteration = 71)
+tree_15_predictions_70
 
 
 
