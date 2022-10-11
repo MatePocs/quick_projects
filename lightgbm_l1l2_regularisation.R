@@ -459,7 +459,7 @@ gradient_r <- (516 * 0.513) - 351
 hessian_r <-  (516 * 0.513) * exp(0.7)
 (-(gradient_r+15) / hessian_r) * 0.5 + log(0.513) # -0.6006085
   
-split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) 
+split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) # 19.69986, great
 
 # second tree, index 1
 tree_15[tree_index == 1,]
@@ -487,6 +487,73 @@ tree_15_predictions_69 <-  predict(lgb_model_15, dtest_data, num_iteration = 60)
 tree_15_predictions_69
 tree_15_predictions_70 <-  predict(lgb_model_15, dtest_data, num_iteration = 71)
 tree_15_predictions_70
+
+# this is not going to work, the change is too minimal here... 
+# let's try to plot the likelihood gain vs the penalty as a function of trees
+
+# super important: in the first tree, need to subtract the overall mean, we don't want to penalise that
+tree_15[,leaf_value_adjusted := leaf_value]
+tree_15[tree_index == 0,leaf_value_adjusted := leaf_value - log(mean(data_curr[,target]))]
+
+analysis_dt <- data.table()
+
+# careful here, there index 0 will stand for the starting iteration, so the one with the general averag
+# curr_num_iteration =1 will cover tree_index = 0
+for(curr_num_iteration in 0:71){
+  
+  # input 1): predictions
+  
+  if(curr_num_iteration == 0){
+    curr_predictions <- rep(mean(data_curr[,target]),3)
+  } else {
+    dtest_data <- as.matrix(data.table(var1 = c(0,1,2))) # we only need the 3 basic predictions
+    curr_predictions <-  predict(lgb_model_15, dtest_data, num_iteration = curr_num_iteration)
+  }
+  
+  curr_analysis_dt <- data.table(num_iteration = curr_num_iteration,  
+                                 group_0_predict = curr_predictions[1],
+                                 group_1_predict = curr_predictions[2],
+                                 group_2_predict = curr_predictions[3])
+  
+  # the next bit is faster than predicting individually, although it's still ugly...
+  data_curr[var1 == 0, prediction := curr_predictions[1]]
+  data_curr[var1 == 1, prediction := curr_predictions[2]]
+  data_curr[var1 == 2, prediction := curr_predictions[3]]
+  
+  # input 2): log-likelihoods
+  
+  data_curr[,log_likelihood:=log(prediction ^ target * exp(-prediction) / factorial(target))]
+  
+  curr_analysis_dt[,group_0_log_likelihood := data_curr[var1 == 0, sum(log_likelihood)]]
+  curr_analysis_dt[,group_1_log_likelihood := data_curr[var1 == 1, sum(log_likelihood)]]
+  curr_analysis_dt[,group_2_log_likelihood := data_curr[var1 == 2, sum(log_likelihood)]]
+  curr_analysis_dt[,log_likelihood := data_curr[,sum(log_likelihood)]]
+  
+  # input 3): penalty terms
+  if(curr_num_iteration == 0){
+    curr_analysis_dt[,l1_penalty := 0]
+  } else {
+    curr_analysis_dt[,l1_penalty := tree_15[tree_index <= curr_num_iteration-1 & !is.na(leaf_value_adjusted), 
+                                            15 * sum(abs(leaf_value_adjusted))]]  
+  }
+  
+  
+  # summing and cleanup
+  
+  analysis_dt <- rbind(analysis_dt, curr_analysis_dt)
+  
+  # data_curr[,':='(prediction = NULL)]
+  
+}
+
+
+analysis_dt[,log_likelihood_gain := round(log_likelihood - shift(log_likelihood),6)]
+analysis_dt[,l1_penalty_loss := round(l1_penalty - shift(l1_penalty),6)]
+
+analysis_dt[,objective_function_gain := log_likelihood_gain - l1_penalty_loss]
+
+analysis_dt
+
 
 
 
