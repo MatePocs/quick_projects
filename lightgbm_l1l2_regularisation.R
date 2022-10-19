@@ -50,7 +50,7 @@ leaf_gain <- function(gradient, hessian, lambda_l1, lambda_l2){
   
   # TODO
   # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
-  # but I haven't specificzlly tested lambda_l2 yet
+  # but I haven't specifically tested lambda_l2 yet
   
   return((threshold_l1(gradient, lambda_l1)) ^ 2 / (hessian + lambda_l2))
 }
@@ -165,8 +165,11 @@ plot_dt <- melt.data.table(result_dt, id.vars = "lambda_l1")
 plot_dt[variable == "group_0_predict", value := value - plot_line_shift]
 plot_dt[variable == "group_1_predict", value := value + plot_line_shift]
 p <- ggplot(data = plot_dt, aes(x = lambda_l1, y = value)) + 
-  geom_line(aes(colour = variable), size = 2)
+  geom_line(aes(colour = variable), size = 2) +
+  ylab("predictions") + 
+  labs(colour = "")
 p
+ggsave(p, file = "charts/lightgbm_l1_plot1.png")
 
 ## results analysis -----------------------
 
@@ -222,6 +225,8 @@ tree_100 <- lgb.model.dt.tree(lgb_model_100)
 tree_126 <- lgb.model.dt.tree(lgb_model_126)
 tree_127 <- lgb.model.dt.tree(lgb_model_127)
 
+main_columns <- c("depth", "split_gain", "threshold", "internal_value", "leaf_value", "leaf_count")
+
 ## hypothetical testing -----------------------
 
 # this is going to be a bit weird, but we need to do some tests on whether the regularisation improved anything
@@ -245,7 +250,7 @@ data_test[,mean(target), keyby = var1]
 # OK, it's much closer to the Poisson lambdas
 
 lambda_l1_to_check <- seq(0,200,by=1)
-lambda_l1_to_check <- c(0,20)
+# lambda_l1_to_check <- c(0,20)
 
 likelihood_dt <- data.table()
 
@@ -261,19 +266,24 @@ for (curr_lambda in lambda_l1_to_check){
   
   curr_likelihood_dt <- data.table(
     lambda_l1 = c(curr_lambda), 
-    mean_poisson_loglikelihood_group_0 = c(mean(data_test[var1==0,poisson_loglikelihood])),
-    mean_poisson_loglikelihood_group_1 = c(mean(data_test[var1==1,poisson_loglikelihood])),
-    mean_poisson_loglikelihood_group_2 = c(mean(data_test[var1==2,poisson_loglikelihood])),
-    mean_poisson_loglikelihood = c(mean(data_test[,poisson_loglikelihood])))
+    group_0_loglikelihood = c(mean(data_test[var1==0,poisson_loglikelihood])),
+    group_1_loglikelihood = c(mean(data_test[var1==1,poisson_loglikelihood])),
+    group_2_loglikelihood = c(mean(data_test[var1==2,poisson_loglikelihood])),
+    total_loglikelihood = c(mean(data_test[,poisson_loglikelihood])))
   
   likelihood_dt <- rbind(likelihood_dt, curr_likelihood_dt)
   
 }
 
-likelihood_dt
+likelihood_dt[order(total_loglikelihood)]
 
 plot_dt <- melt.data.table(likelihood_dt, id.vars = c("lambda_l1"))
-ggplot(plot_dt, aes(x = lambda_l1, y = value, colour = variable)) + geom_line()
+p <- ggplot(plot_dt, aes(x = lambda_l1, y = value, colour = variable)) + 
+  geom_line(aes(color = variable), size = 2) + 
+  ylab("mean_loglikelihood") + 
+  labs(colour = "")
+p
+ggsave(p, file = "charts/lightgbm_l1_plot2.png")
 
 likelihood_dt[order(mean_poisson_loglikelihood)]
 
@@ -294,6 +304,7 @@ result_dt[lambda_l1 == 20]
 
 # let's try to recalculate values for model with 0 reg, the first tree
 tree_0[tree_index == 0,]
+tree_0[tree_index == 0, main_columns, with = FALSE]
 
 # the left one, var1 == 0, with leaf_value of -0.7537717
 gradient_l <- 484 * 0.513 - 162
@@ -450,6 +461,7 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 1, lambda_l
 
 # first tree, index 0
 tree_15[tree_index == 0,]
+tree_15[tree_index == 0,main_columns, with = FALSE]
 
 gradient_l <- (484 * 0.513) - 162
 hessian_l <-  (484 * 0.513) * exp(0.7)
@@ -546,15 +558,15 @@ for(curr_num_iteration in 0:71){
   
 }
 
-
 analysis_dt[,log_likelihood_gain := round(log_likelihood - shift(log_likelihood),6)]
 analysis_dt[,l1_penalty_loss := round(l1_penalty - shift(l1_penalty),6)]
-
 analysis_dt[,objective_function_gain := log_likelihood_gain - l1_penalty_loss]
 
 analysis_dt
 
+ggplot(data = analysis_dt[num_iteration <= 35], aes(x = num_iteration, y = objective_function_gain)) + geom_point()
 
+# 
 
 
 # NOTES ###################
