@@ -46,6 +46,16 @@ threshold_l1 <- function(s, l1){
   return(result)
 }
 
+leaf_score <- function(gradient, hessian, lambda_l1 = 0, lambda_l2 = 0, learning_rate = 1, starting_prediction = 0){
+  
+  # TODO
+  # lambda_l1 is tested, and I suspect the same logic will need to be applied on lambda_l2
+  # but I haven't specifically tested lambda_l2 yet
+  return((-(threshold_l1(gradient, lambda_l1)) / (hessian)) * learning_rate +  starting_prediction)
+}
+
+
+
 leaf_gain <- function(gradient, hessian, lambda_l1, lambda_l2){
   
   # TODO
@@ -285,8 +295,6 @@ p <- ggplot(plot_dt, aes(x = lambda_l1, y = value, colour = variable)) +
 p
 ggsave(p, file = "charts/lightgbm_l1_plot2.png")
 
-likelihood_dt[order(mean_poisson_loglikelihood)]
-
 likelihood_dt[lambda_l1 %in% c(0, 20)]
 
 # this is super interesting, turns out, at lambda_l1 = 20, the loglikelihood is the highest
@@ -466,10 +474,12 @@ tree_15[tree_index == 0,main_columns, with = FALSE]
 gradient_l <- (484 * 0.513) - 162
 hessian_l <-  (484 * 0.513) * exp(0.7)
 (-(gradient_l-15) / hessian_l) * 0.5  + log(0.513) # -0.7387716
+leaf_score(gradient_l, hessian_l, 15,0,0.5,log(0.513))
 
 gradient_r <- (516 * 0.513) - 351
 hessian_r <-  (516 * 0.513) * exp(0.7)
 (-(gradient_r+15) / hessian_r) * 0.5 + log(0.513) # -0.6006085
+leaf_score(gradient_r, hessian_r, 15,0,0.5,log(0.513))
   
 split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) # 19.69986, great
 
@@ -479,13 +489,29 @@ tree_15[tree_index == 1,]
 gradient_l <- (484 * exp(-0.7387716)) - 162
 hessian_l <-  (484 * exp(-0.7387716)) * exp(0.7)
 (-(gradient_l-15) / hessian_l) * 0.5   # -0.05821275
+leaf_score(gradient_l, hessian_l, 15,0,0.5,0)
 
 gradient_r <- (516 * exp(-0.6006085)) - 351
 hessian_r <-  (516 * exp(-0.6006085)) * exp(0.7)
 (-(gradient_r+15) / hessian_r) * 0.5  # 0.04648489
+leaf_score(gradient_r, hessian_r, 15,0,0.5,0)
 
 split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_l2 = 0) # 11.23712, beautiful
 
+# let's see an example where the leaf scores drops to 0, tree_index 2
+tree_15[tree_index == 2,]
+tree_15[tree_index == 2,main_columns, with = FALSE]
+dtest_data <- as.matrix(data.table(var1 = c(0,1,2))) # we only need the 3 basic predictions
+tree_15_predictions_1 <-  predict(lgb_model_15, dtest_data, num_iteration = 2)
+tree_15_predictions_1
+# let's try to recreate this
+exp(-0.7387716 - 0.05821275) # 0.450686
+exp(-0.6006085 + 0.04648489) # 0.5745756, OK cool
+# so at this point, group 2 prediction is 0.5745756
+# which means its gradient: 
+219 * 0.5745756 - 134 # -8.167944
+# the gradient of group 1 meanwhile
+297 * 0.5745756 - 217 # -46.35105
 
 # all right, one last question: what does the split gein actually represent? 
 # let's try to show why the 71th cut is still made and why the 72th is not
@@ -494,12 +520,10 @@ split_gain(gradient_l, hessian_l, gradient_r, hessian_r, lambda_l1 = 15, lambda_
 tree_15[tree_index == 70,]
 
 # let's see what happens up until the 70th tree, so before the last split
-dtest_data <- as.matrix(data.table(var1 = c(0,1,2))) # we only need the 3 basic predictions
-tree_15_predictions_69 <-  predict(lgb_model_15, dtest_data, num_iteration = 60)
+tree_15_predictions_69 <-  predict(lgb_model_15, dtest_data, num_iteration = 69)
 tree_15_predictions_69
 tree_15_predictions_70 <-  predict(lgb_model_15, dtest_data, num_iteration = 71)
 tree_15_predictions_70
-
 # this is not going to work, the change is too minimal here... 
 # let's try to plot the likelihood gain vs the penalty as a function of trees
 
